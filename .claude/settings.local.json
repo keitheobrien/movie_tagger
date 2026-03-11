@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/kobrien/git/movie_posters status)",
+      "Bash(git -C /Users/kobrien/git/movie_posters log --oneline --all)",
+      "Bash(git -C /Users/kobrien/git/movie_posters log --format=\"%H %s\" 5541818..HEAD)",
+      "Bash(git -C /Users/kobrien/git/movie_posters show --stat 5541818)",
+      "Bash(brew list:*)",
+      "Bash(brew install:*)",
+      "Bash(xcodegen generate:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(swiftc --version:*)",
+      "Bash(swift generate_icon.swift:*)"
+    ]
+  }
+}

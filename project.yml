@@ -1,0 +1,32 @@
+name: MovieTagger
+options:
+  bundleIdPrefix: com.movietagger
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+targets:
+  MovieTagger:
+    type: application
+    platform: macOS
+    sources:
+      - MovieTagger
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.movietagger.app
+        PRODUCT_NAME: MovieTagger
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        SWIFT_VERSION: "5.9"
+        INFOPLIST_FILE: MovieTagger/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MovieTagger/MovieTagger.entitlements
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: false
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: 1
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
