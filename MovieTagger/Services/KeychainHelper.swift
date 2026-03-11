@@ -77,7 +77,7 @@ enum KeychainHelper {
     /// Read the hardware UUID via IOKit (stable per-machine identifier).
     private static func hardwareUUID() -> String? {
         let service = IOServiceGetMatchingService(
-            kIOMasterPortDefault,
+            kIOMainPortDefault,
             IOServiceMatching("IOPlatformExpertDevice")
         )
         guard service != 0 else { return nil }

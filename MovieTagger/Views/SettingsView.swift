@@ -51,8 +51,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollDisabled(true)
         .padding()
-        .frame(width: 450, height: 420)
+        .frame(width: 450)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             apiKey = appState.apiKey
             language = appState.language
