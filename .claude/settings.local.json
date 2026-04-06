@@ -10,7 +10,10 @@
       "Bash(xcodegen generate:*)",
       "Bash(xcodebuild:*)",
       "Bash(swiftc --version:*)",
-      "Bash(swift generate_icon.swift:*)"
+      "Bash(swift generate_icon.swift:*)",
+      "Bash(python3 -c \"from PIL import Image; print\\(''Pillow available''\\)\")",
+      "Bash(pip3 install:*)",
+      "Bash(python3 create_icon.py)"
     ]
   }
 }

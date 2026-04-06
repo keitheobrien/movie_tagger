@@ -65,6 +65,27 @@ struct FileSelectionView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomLeading) {
+            Group {
+                if #available(macOS 14, *) {
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Button {
+                        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(16)
+        }
     }
 
     // MARK: - File picking
