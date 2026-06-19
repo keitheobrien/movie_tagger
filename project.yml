@@ -11,7 +11,12 @@ targets:
     type: application
     platform: macOS
     sources:
-      - MovieTagger
+      - path: MovieTagger
+        excludes:
+          # Never bundle a stray built .app sitting in the source tree — it
+          # rides along in Contents/Resources and fails notarization.
+          - "MovieTagger.app"
+          - "**/*.app"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.movietagger.app
@@ -30,3 +35,9 @@ targets:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
         Release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
+          # Developer ID distribution + notarization (Release/archive only;
+          # Debug stays on automatic "Sign to Run Locally" for local builds).
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: "9R236BB67S"
+          ENABLE_HARDENED_RUNTIME: YES

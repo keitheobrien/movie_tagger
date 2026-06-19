@@ -28,3 +28,6 @@ playground.xcworkspace
 *.ipa
 *.dSYM.zip
 *.dSYM
+
+# Stray built .app accidentally committed into the source tree
+MovieTagger/MovieTagger.app/
