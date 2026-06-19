@@ -55,7 +55,14 @@ A native macOS application that automatically tags MP4 video files with rich mov
 
 ### Pre-built Release
 
-Download the latest `.app` from the [Releases](../../releases) page and drag it to your Applications folder.
+Prefer not to build it yourself? Download the ready-to-run app. Requires **macOS 13.0 or later**.
+
+1. Download [**MovieTagger-1.0.zip**](https://github.com/keitheobrien/movie_tagger/releases/download/v1.0/MovieTagger-1.0.zip) from the [v1.0 release page](https://github.com/keitheobrien/movie_tagger/releases/tag/v1.0) — or grab [the latest release](https://github.com/keitheobrien/movie_tagger/releases/latest) to always get the newest version.
+2. Double-click the downloaded `.zip` to unzip it. This produces `MovieTagger.app`.
+3. Drag `MovieTagger.app` into your **Applications** folder.
+4. Double-click **MovieTagger** to open it. The build is signed with a Developer ID and notarized by Apple, so it launches right away with no security warnings.
+
+Then follow the [Setup](#setup) section to add your TMDb API key.
 
 ## Setup
 
