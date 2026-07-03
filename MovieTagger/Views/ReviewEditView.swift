@@ -22,6 +22,8 @@ private struct ReviewEditContent: View {
     @State private var showPosterPicker = false
     @State private var showCancelConfirm = false
     @State private var showWriteConfirm = false
+    @State private var resolvedPreview: String?
+    @State private var isReloadingPosters = false
 
     private let formatter = FilenameFormatter()
 
@@ -68,6 +70,7 @@ private struct ReviewEditContent: View {
                     .frame(width: 200)
                     .cornerRadius(8)
                     .shadow(radius: 4)
+                    .accessibilityLabel("Poster for \(model.title)")
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.gray.opacity(0.2))
@@ -87,9 +90,57 @@ private struct ReviewEditContent: View {
                         PosterPickerView(model: model, isPresented: $showPosterPicker)
                             .environmentObject(appState)
                     }
+            } else {
+                // The background poster fetch can fail (transient network error)
+                // after navigation — give the user a way back in.
+                Button {
+                    Task { await reloadPosters() }
+                } label: {
+                    if isReloadingPosters {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Load Posters\u{2026}")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isReloadingPosters)
             }
         }
         .frame(width: 220)
+    }
+
+    // @MainActor: this mutates @State and @Published values directly; the
+    // awaited actor calls keep the main thread free.
+    @MainActor
+    private func reloadPosters() async {
+        guard let client = appState.tmdbClient, let id = Int(model.tmdbId) else {
+            appState.showError("TMDb client not configured. Set your API key in Settings.")
+            return
+        }
+        isReloadingPosters = true
+        defer { isReloadingPosters = false }
+        do {
+            let images = try await client.fetchMovieImages(id: id, language: "en")
+            model.availablePosters = images.posters ?? []
+
+            // Also recover the primary poster if it never arrived.
+            if model.posterImageData == nil,
+               let path = model.selectedPosterPath ?? images.posters?.first?.filePath {
+                let url = try await client.posterURL(path: path)
+                let data = try await client.fetchImageData(from: url)
+                model.posterImageData = data
+                model.posterURL = url.absoluteString
+            }
+
+            if model.availablePosters.isEmpty, appState.movieEditModel === model {
+                appState.showError("TMDb has no posters for this movie.")
+            }
+        } catch {
+            // Don't leak an alert into a different movie's session.
+            if appState.movieEditModel === model {
+                appState.showError("Couldn\u{2019}t load posters: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Editable fields
@@ -131,11 +182,7 @@ private struct ReviewEditContent: View {
             }
 
             LabeledField("Genres") {
-                Text(model.genres.joined(separator: ", "))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(6)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(4)
+                TagListField(items: $model.genres, placeholder: "Add genre\u{2026}")
             }
 
             HStack(spacing: 16) {
@@ -151,6 +198,7 @@ private struct ReviewEditContent: View {
                         }
                     }
                     .labelsHidden()
+                    .accessibilityLabel("Resolution")
                     .frame(width: 120)
                 }
                 LabeledField("Studio") {
@@ -223,23 +271,35 @@ private struct ReviewEditContent: View {
 
                 HStack {
                     Text("Preview:").foregroundColor(.secondary)
-                    if let preview = previewName {
-                        Text(preview).fontWeight(.medium)
+                    if let name = formattedName {
+                        Text(resolvedPreview ?? name).fontWeight(.medium)
                     } else {
                         Text("Invalid pattern \u{2014} file won\u{2019}t be renamed")
                             .foregroundColor(.orange)
                     }
                 }
+                .task(id: previewTaskKey) {
+                    // Collision resolution stats the filesystem — keep it off the
+                    // per-keystroke render path.
+                    resolvedPreview = resolveFinalName()
+                }
             }
         }
     }
 
+    /// Cheap string-only formatting — safe to call on every render.
+    private var formattedName: String? {
+        formatter.formatIfValid(pattern: model.namingPattern, model: model)
+    }
+
+    private var previewTaskKey: String {
+        (formattedName ?? "\u{0}") + "|" + (appState.selectedFileURL?.path ?? "")
+    }
+
     /// The exact name the rename step will produce — same formatting AND the same
     /// collision resolution as the actual write, so the preview never lies.
-    private var previewName: String? {
-        guard let name = formatter.formatIfValid(pattern: model.namingPattern, model: model) else {
-            return nil
-        }
+    private func resolveFinalName() -> String? {
+        guard let name = formattedName else { return nil }
         guard let source = appState.selectedFileURL else { return name }
         return formatter.resolveCollision(
             directoryURL: source.deletingLastPathComponent(),
@@ -259,6 +319,7 @@ private struct ReviewEditContent: View {
 
             Button("Cancel") { showCancelConfirm = true }
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
                 .confirmationDialog(
                     "Discard this session?",
                     isPresented: $showCancelConfirm
@@ -286,7 +347,7 @@ private struct ReviewEditContent: View {
 
     private var writeConfirmMessage: String {
         var message = "Metadata is written directly into the file and can\u{2019}t be undone."
-        if model.renameFile, let preview = previewName,
+        if model.renameFile, let preview = resolveFinalName(),
            preview != appState.selectedFileURL?.lastPathComponent {
             message += " The file will then be renamed to \u{201C}\(preview)\u{201D}."
         }
@@ -310,6 +371,8 @@ struct LabeledField<Content: View>: View {
             Text(label).font(.caption).foregroundColor(.secondary)
             content()
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
     }
 }
 
@@ -334,8 +397,11 @@ struct TagListField: View {
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 8, weight: .bold))
+                                .frame(width: 16, height: 16)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(item)")
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -437,8 +503,8 @@ struct PosterPickerView: View {
 
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
-                    ForEach(model.availablePosters) { poster in
-                        posterCell(poster)
+                    ForEach(Array(model.availablePosters.enumerated()), id: \.element.id) { index, poster in
+                        posterCell(poster, index: index)
                     }
                 }
                 .padding()
@@ -448,6 +514,7 @@ struct PosterPickerView: View {
                 Spacer()
                 Button("Cancel") { isPresented = false }
                     .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
             }
             .padding()
         }
@@ -455,7 +522,8 @@ struct PosterPickerView: View {
     }
 
     @ViewBuilder
-    private func posterCell(_ poster: TMDbImage) -> some View {
+    private func posterCell(_ poster: TMDbImage, index: Int) -> some View {
+        let isSelected = model.selectedPosterPath == poster.filePath
         Button { selectPoster(poster) } label: {
             VStack {
                 if let img = loadedImages[poster.filePath] {
@@ -472,17 +540,20 @@ struct PosterPickerView: View {
                         .task { await loadThumbnail(poster) }
                 }
 
-                if model.selectedPosterPath == poster.filePath {
+                if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.accentColor)
+                        .accessibilityHidden(true)
                 }
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Poster option \(index + 1)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(
-                    model.selectedPosterPath == poster.filePath ? Color.accentColor : .clear,
+                    isSelected ? Color.accentColor : .clear,
                     lineWidth: 3
                 )
         )

@@ -11,8 +11,13 @@ struct ContentView: View {
                 mainContent
             }
         }
+        // Window title always says which file is being worked on mid-flow.
+        .navigationSubtitle(appState.selectedFileURL?.lastPathComponent ?? "")
         .alert("Error", isPresented: $appState.showError) {
-            Button("OK") { appState.showError = false }
+            if appState.errorIsAuthFailure {
+                OpenSettingsAlertButton()
+            }
+            Button("OK", role: .cancel) { appState.showError = false }
         } message: {
             Text(appState.errorMessage ?? "An unknown error occurred.")
         }
@@ -33,6 +38,37 @@ struct ContentView: View {
     }
 
     private var apiKeyPromptView: some View {
+        ApiKeyPromptView()
+    }
+}
+
+/// "Open Settings" that actually works inside alert actions on every OS:
+/// AppKit blocks the showSettingsWindow: selector from Sonoma on, and
+/// SettingsLink can't be used in alerts — but the openSettings environment
+/// action can.
+private struct OpenSettingsAlertButton: View {
+    var body: some View {
+        if #available(macOS 14, *) {
+            ModernOpenSettingsButton()
+        } else {
+            Button("Open Settings") {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+        }
+    }
+}
+
+@available(macOS 14, *)
+private struct ModernOpenSettingsButton: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button("Open Settings") { openSettings() }
+    }
+}
+
+private struct ApiKeyPromptView: View {
+    var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "key.fill")
                 .font(.system(size: 48))

@@ -31,6 +31,11 @@ struct FilenameFormatter {
         while s.hasSuffix(".") {
             s = String(s.dropLast()).trimmingCharacters(in: .whitespaces)
         }
+        // A leading dot would make the file invisible in Finder — never what a
+        // movie-library user wants from a rename.
+        while s.hasPrefix(".") {
+            s = String(s.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
         return s
     }
 

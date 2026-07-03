@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var apiKey = ""
+    @State private var lastAttemptedKey = ""
+    @State private var showApiKey = false
     @State private var language = "en-US"
     @State private var namingPattern = "{title} ({year})"
     @State private var keyStatus: KeyStatus = .idle
@@ -18,12 +20,46 @@ struct SettingsView: View {
         Form {
             Section("TMDb API") {
                 HStack {
-                    SecureField("API Key", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { verifyAndSaveKey() }
+                    Group {
+                        if showApiKey {
+                            TextField("API Key", text: $apiKey)
+                        } else {
+                            SecureField("API Key", text: $apiKey)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { verifyAndSaveKey() }
+
+                    Button {
+                        showApiKey.toggle()
+                    } label: {
+                        Image(systemName: showApiKey ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.plain)
+                    .help(showApiKey ? "Hide API key" : "Show API key")
+                    .accessibilityLabel(showApiKey ? "Hide API key" : "Show API key")
 
                     Button("Verify & Save") { verifyAndSaveKey() }
                         .disabled(keyStatus == .verifying)
+
+                    if !appState.apiKey.isEmpty {
+                        Button("Remove Key", role: .destructive) {
+                            appState.removeApiKey()
+                            // Keep lastAttemptedKey in sync so the onChange
+                            // reset doesn't immediately wipe the confirmation.
+                            lastAttemptedKey = ""
+                            apiKey = ""
+                            keyStatus = .saved("Key removed.")
+                        }
+                        .disabled(keyStatus == .verifying)
+                    }
+                }
+                .onChange(of: apiKey) { newValue in
+                    // A stale verdict shouldn't describe text the user has since
+                    // edited (it also gates the onDisappear onboarding save).
+                    if newValue != lastAttemptedKey, keyStatus != .verifying {
+                        keyStatus = .idle
+                    }
                 }
 
                 keyStatusLine
@@ -105,6 +141,8 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Verifying key")
         case .saved(let message):
             Label(message, systemImage: "checkmark.circle.fill")
                 .font(.caption)
@@ -123,6 +161,7 @@ struct SettingsView: View {
         guard keyStatus != .verifying else { return }
 
         let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastAttemptedKey = trimmed
         apiKey = trimmed
 
         guard !trimmed.isEmpty else {
@@ -143,11 +182,11 @@ struct SettingsView: View {
                 await MainActor.run { persistVerifiedKey(trimmed) }
             } catch TMDbError.unauthorized {
                 await MainActor.run {
-                    keyStatus = .failed("TMDb rejected this key. Double-check it and try again.")
+                    finishVerification(with: .failed("TMDb rejected this key. Double-check it and try again."))
                 }
             } catch {
                 await MainActor.run {
-                    keyStatus = .failed("Couldn\u{2019}t verify the key: \(error.localizedDescription)")
+                    finishVerification(with: .failed("Couldn\u{2019}t verify the key: \(error.localizedDescription)"))
                 }
             }
         }
@@ -156,9 +195,21 @@ struct SettingsView: View {
     private func persistVerifiedKey(_ key: String) {
         do {
             try appState.saveApiKey(key)
-            keyStatus = .saved("Key verified and saved.")
+            finishVerification(with: .saved("Key verified and saved."))
         } catch {
-            keyStatus = .failed("Key is valid, but saving it failed: \(error.localizedDescription)")
+            finishVerification(with: .failed("Key is valid, but saving it failed: \(error.localizedDescription)"))
+        }
+    }
+
+    /// The verdict describes `lastAttemptedKey` — if the field was edited while
+    /// verification ran, show nothing rather than a result for stale text.
+    /// (This also keeps a stale .failed from blocking the onDisappear
+    /// onboarding save of the corrected key.)
+    private func finishVerification(with status: KeyStatus) {
+        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines) == lastAttemptedKey {
+            keyStatus = status
+        } else {
+            keyStatus = .idle
         }
     }
 }

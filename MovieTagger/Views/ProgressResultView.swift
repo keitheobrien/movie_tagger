@@ -41,6 +41,8 @@ struct ProgressResultView: View {
                 .fontWeight(.medium)
                 .monospacedDigit()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Writing metadata, \(Int(progress * 100)) percent")
     }
 
     // MARK: - Success
@@ -50,6 +52,7 @@ struct ProgressResultView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
                 .foregroundColor(.green)
+                .accessibilityHidden(true)
 
             Text("Metadata Written Successfully")
                 .font(.title2)
@@ -73,6 +76,7 @@ struct ProgressResultView: View {
 
                 Button("Tag Another") { appState.reset() }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }
@@ -84,6 +88,7 @@ struct ProgressResultView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 48))
                 .foregroundColor(.red)
+                .accessibilityHidden(true)
 
             Text("Metadata Write Failed")
                 .font(.title2)
@@ -100,6 +105,7 @@ struct ProgressResultView: View {
                     startWriting()
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
 
                 Button("Go Back") { appState.currentScreen = .reviewEdit }
                     .buttonStyle(.bordered)

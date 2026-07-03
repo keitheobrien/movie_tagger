@@ -2,10 +2,11 @@ import SwiftUI
 
 struct MovieSearchView: View {
     @EnvironmentObject var appState: AppState
-    @State private var searchResults: [TMDbSearchResult] = []
     @State private var isSearching = false
-    @State private var hasSearched = false
     @State private var isLoadingDetails = false
+    @State private var selectedResultID: Int?
+    @State private var detailsTask: Task<Void, Never>?
+    @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,10 +19,10 @@ struct MovieSearchView: View {
                 HStack {
                     TextField("Movie name\u{2026}", text: $appState.searchQuery)
                         .textFieldStyle(.roundedBorder)
+                        .focused($searchFieldFocused)
                         .onSubmit { performSearch() }
 
                     Button("Search") { performSearch() }
-                        .buttonStyle(.borderedProminent)
                         .disabled(appState.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty || isSearching)
                 }
             }
@@ -29,42 +30,72 @@ struct MovieSearchView: View {
 
             Divider()
 
-            // Results
+            // Results: native list — single click selects, double-click or
+            // Return/Choose opens, arrow keys navigate.
             if isSearching || isLoadingDetails {
                 Spacer()
-                ProgressView(isLoadingDetails ? "Loading movie details\u{2026}" : "Searching\u{2026}")
+                VStack(spacing: 16) {
+                    ProgressView(isLoadingDetails ? "Loading movie details\u{2026}" : "Searching\u{2026}")
+                    if isLoadingDetails {
+                        Button("Cancel") { cancelDetailsLoad() }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                }
                 Spacer()
-            } else if searchResults.isEmpty && hasSearched {
+            } else if appState.searchResults.isEmpty && appState.hasSearched {
                 Spacer()
-                Text("No results found.")
-                    .foregroundColor(.secondary)
+                VStack(spacing: 8) {
+                    Text("No results found.")
+                        .foregroundColor(.secondary)
+                    Text("Try different search terms, or check the spelling of the title.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Spacer()
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(searchResults) { result in
-                            SearchResultRow(result: result) { selectMovie(result) }
-                        }
+                List(selection: $selectedResultID) {
+                    ForEach(appState.searchResults) { result in
+                        SearchResultRow(result: result)
+                            .tag(result.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { selectMovie(result) }
                     }
-                    .padding(.vertical, 8)
                 }
+                .listStyle(.inset)
             }
 
             Divider()
 
             // Bottom bar
             HStack {
-                Button("Back") { appState.currentScreen = .fileSelection }
-                    .buttonStyle(.bordered)
+                Button("Back") {
+                    cancelDetailsLoad()
+                    appState.currentScreen = .fileSelection
+                }
+                .buttonStyle(.bordered)
+
                 Spacer()
+
+                Button("Choose") {
+                    if let id = selectedResultID,
+                       let result = appState.searchResults.first(where: { $0.id == id }) {
+                        selectMovie(result)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                // While the search field is focused, Return means "search" —
+                // don't let the default action steal it for a stale selection.
+                .keyboardShortcut(searchFieldFocused ? nil : .defaultAction)
+                .disabled(selectedResultID == nil || isLoadingDetails || isSearching)
             }
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            if !appState.searchQuery.isEmpty && searchResults.isEmpty {
+            if !appState.searchQuery.isEmpty && !appState.hasSearched {
                 performSearch()
             }
+            DispatchQueue.main.async { searchFieldFocused = true }
         }
     }
 
@@ -76,16 +107,24 @@ struct MovieSearchView: View {
             return
         }
         let query = appState.searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return }
+        guard !query.isEmpty, !isSearching else { return }
 
         isSearching = true
-        hasSearched = true
 
         Task {
             do {
                 let response = try await client.searchMovies(query: query, language: appState.language)
                 await MainActor.run {
-                    searchResults = response.results
+                    // Ignore a slow response for a query the user has since changed.
+                    guard appState.searchQuery.trimmingCharacters(in: .whitespaces) == query else {
+                        isSearching = false
+                        return
+                    }
+                    appState.searchResults = response.results
+                    // Only claim "No results found" for searches that actually
+                    // completed — a failed search keeps its previous state.
+                    appState.hasSearched = true
+                    selectedResultID = nil
                     isSearching = false
                 }
             } catch {
@@ -99,6 +138,12 @@ struct MovieSearchView: View {
 
     // MARK: - Select movie
 
+    private func cancelDetailsLoad() {
+        detailsTask?.cancel()
+        detailsTask = nil
+        isLoadingDetails = false
+    }
+
     private func selectMovie(_ result: TMDbSearchResult) {
         // Re-selecting the movie already being edited (e.g. after pressing Back):
         // return to the existing edit session instead of rebuilding the model,
@@ -111,13 +156,19 @@ struct MovieSearchView: View {
         guard let client = appState.tmdbClient else { return }
         isLoadingDetails = true
 
-        Task {
+        detailsTask = Task {
             do {
                 let (details, rawJSON) = try await client.fetchMovieDetailsWithRawJSON(
                     id: result.id, language: appState.language
                 )
 
-                await MainActor.run {
+                let navigatedModel = await MainActor.run { () -> MovieEditModel? in
+                    isLoadingDetails = false
+                    // The user may have pressed Back (or Cancel) while we were
+                    // loading — never yank them forward to a screen they left.
+                    guard !Task.isCancelled, appState.currentScreen == .movieSearch else {
+                        return nil
+                    }
                     let editModel = MovieEditModel(from: details)
                     editModel.namingPattern = appState.defaultNamingPattern
                     editModel.rawDetailsJSON = rawJSON
@@ -125,29 +176,50 @@ struct MovieSearchView: View {
                     appState.selectedDetails = details
                     appState.movieEditModel = editModel
                     appState.currentScreen = .reviewEdit
-                    isLoadingDetails = false
+                    return editModel
                 }
+                guard let editModel = navigatedModel else { return }
 
-                // Fetch poster in background
-                if let path = details.posterPath {
-                    let url = try await client.posterURL(path: path)
-                    let data = try await client.fetchImageData(from: url)
-                    await MainActor.run {
-                        appState.movieEditModel?.posterImageData = data
-                        appState.movieEditModel?.posterURL = url.absoluteString
-                    }
-                }
-
-                // Fetch available posters
-                let images = try await client.fetchMovieImages(id: result.id, language: "en")
-                await MainActor.run {
-                    appState.movieEditModel?.availablePosters = images.posters ?? []
-                }
+                // Posters load in their own task so leaving the search screen
+                // (which is expected — we just navigated) doesn't cancel them.
+                // The task writes to the exact model it was started for — never
+                // to "whatever model is current when the download finishes".
+                Task { await fetchPosters(for: details, into: editModel, title: result.title, client: client) }
+            } catch is CancellationError {
+                await MainActor.run { isLoadingDetails = false }
+            } catch let error as URLError where error.code == .cancelled {
+                await MainActor.run { isLoadingDetails = false }
             } catch {
                 await MainActor.run {
                     isLoadingDetails = false
                     appState.showError(error.localizedDescription)
                 }
+            }
+        }
+    }
+
+    private func fetchPosters(for details: TMDbMovieDetails, into model: MovieEditModel, title: String, client: TMDbClient) async {
+        do {
+            if let path = details.posterPath {
+                let url = try await client.posterURL(path: path)
+                let data = try await client.fetchImageData(from: url)
+                await MainActor.run {
+                    model.posterImageData = data
+                    model.posterURL = url.absoluteString
+                }
+            }
+
+            let images = try await client.fetchMovieImages(id: details.id, language: "en")
+            await MainActor.run {
+                model.availablePosters = images.posters ?? []
+            }
+        } catch {
+            await MainActor.run {
+                // Only bother the user if this movie's session is still active.
+                guard appState.movieEditModel === model else { return }
+                appState.showError(
+                    "Couldn\u{2019}t load posters for \u{201C}\(title)\u{201D}: \(error.localizedDescription) You can retry from the review screen."
+                )
             }
         }
     }
@@ -157,42 +229,50 @@ struct MovieSearchView: View {
 
 struct SearchResultRow: View {
     let result: TMDbSearchResult
-    let onSelect: () -> Void
     @State private var posterImage: NSImage?
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                posterThumbnail
-                    .frame(width: 45, height: 67)
-                    .cornerRadius(4)
+        HStack(spacing: 12) {
+            posterThumbnail
+                .frame(width: 45, height: 67)
+                .cornerRadius(4)
+                .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(result.title).fontWeight(.medium).lineLimit(1)
-                        if let year = result.year {
-                            Text("(\(year))").foregroundColor(.secondary)
-                        }
-                    }
-                    if let overview = result.overview, !overview.isEmpty {
-                        Text(overview)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(result.title).fontWeight(.medium).lineLimit(1)
+                    if let year = result.year {
+                        Text("(\(year))").foregroundColor(.secondary)
                     }
                 }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.secondary)
+                if let overview = result.overview, !overview.isEmpty {
+                    Text(overview)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 4)
         .task { await loadPoster() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    /// "Title (Year)" plus the first sentence of the overview, so VoiceOver
+    /// reads a meaningful summary instead of the raw child views.
+    private var accessibilityDescription: String {
+        var label = result.title
+        if let year = result.year {
+            label += " (\(year))"
+        }
+        if let overview = result.overview,
+           let firstSentence = overview.split(separator: ".", omittingEmptySubsequences: true).first {
+            label += ". \(firstSentence.trimmingCharacters(in: .whitespaces))."
+        }
+        return label
     }
 
     @ViewBuilder
