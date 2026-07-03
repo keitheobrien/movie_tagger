@@ -31,3 +31,6 @@ playground.xcworkspace
 
 # Stray built .app accidentally committed into the source tree
 MovieTagger/MovieTagger.app/
+
+# Claude Code per-machine settings (personal permission grants; not project config)
+.claude/settings.local.json
