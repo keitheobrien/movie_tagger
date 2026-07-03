@@ -59,8 +59,8 @@ class AppState: ObservableObject {
         }
     }
 
-    func saveApiKey(_ key: String) {
-        try? KeychainHelper.save(apiKey: key)
+    func saveApiKey(_ key: String) throws {
+        try KeychainHelper.save(apiKey: key)
         apiKey = key
         tmdbClient = TMDbClient(apiKey: key)
     }

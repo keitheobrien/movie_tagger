@@ -20,6 +20,8 @@ private struct ReviewEditContent: View {
     @ObservedObject var model: MovieEditModel
     @EnvironmentObject var appState: AppState
     @State private var showPosterPicker = false
+    @State private var showCancelConfirm = false
+    @State private var showWriteConfirm = false
 
     private let formatter = FilenameFormatter()
 
@@ -221,11 +223,29 @@ private struct ReviewEditContent: View {
 
                 HStack {
                     Text("Preview:").foregroundColor(.secondary)
-                    Text(formatter.format(pattern: model.namingPattern, model: model))
-                        .fontWeight(.medium)
+                    if let preview = previewName {
+                        Text(preview).fontWeight(.medium)
+                    } else {
+                        Text("Invalid pattern \u{2014} file won\u{2019}t be renamed")
+                            .foregroundColor(.orange)
+                    }
                 }
             }
         }
+    }
+
+    /// The exact name the rename step will produce — same formatting AND the same
+    /// collision resolution as the actual write, so the preview never lies.
+    private var previewName: String? {
+        guard let name = formatter.formatIfValid(pattern: model.namingPattern, model: model) else {
+            return nil
+        }
+        guard let source = appState.selectedFileURL else { return name }
+        return formatter.resolveCollision(
+            directoryURL: source.deletingLastPathComponent(),
+            desiredName: name,
+            excluding: source
+        ).lastPathComponent
     }
 
     // MARK: - Bottom bar
@@ -237,13 +257,40 @@ private struct ReviewEditContent: View {
 
             Spacer()
 
-            Button("Cancel") { appState.reset() }
+            Button("Cancel") { showCancelConfirm = true }
                 .buttonStyle(.bordered)
+                .confirmationDialog(
+                    "Discard this session?",
+                    isPresented: $showCancelConfirm
+                ) {
+                    Button("Discard Edits", role: .destructive) { appState.reset() }
+                    Button("Keep Editing", role: .cancel) {}
+                } message: {
+                    Text("Your metadata edits will be lost.")
+                }
 
-            Button("Write Metadata") { appState.currentScreen = .progress }
+            Button("Write Metadata") { showWriteConfirm = true }
                 .buttonStyle(.borderedProminent)
+                .confirmationDialog(
+                    "Write metadata to \u{201C}\(appState.selectedFileURL?.lastPathComponent ?? "file")\u{201D}?",
+                    isPresented: $showWriteConfirm
+                ) {
+                    Button("Write Metadata") { appState.currentScreen = .progress }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(writeConfirmMessage)
+                }
         }
         .padding()
+    }
+
+    private var writeConfirmMessage: String {
+        var message = "Metadata is written directly into the file and can\u{2019}t be undone."
+        if model.renameFile, let preview = previewName,
+           preview != appState.selectedFileURL?.lastPathComponent {
+            message += " The file will then be renamed to \u{201C}\(preview)\u{201D}."
+        }
+        return message
     }
 }
 

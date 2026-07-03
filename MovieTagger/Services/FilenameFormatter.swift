@@ -3,13 +3,18 @@ import Foundation
 struct FilenameFormatter {
 
     /// Apply the naming pattern with token substitution, sanitize, and add .mp4 extension.
-    func format(pattern: String, model: MovieEditModel) -> String {
+    /// Returns nil when the pattern yields an empty filename (blank pattern, or a
+    /// pattern whose tokens all substitute to nothing) — callers must skip renaming
+    /// rather than produce an invisible ".mp4" dotfile.
+    func formatIfValid(pattern: String, model: MovieEditModel) -> String? {
         var result = pattern
         result = result.replacingOccurrences(of: "{title}",   with: model.title)
         result = result.replacingOccurrences(of: "{year}",    with: model.year)
         result = result.replacingOccurrences(of: "{tmdb_id}", with: model.tmdbId)
         result = result.replacingOccurrences(of: "{imdb_id}", with: model.imdbId)
-        return sanitize(result) + ".mp4"
+        let stem = sanitize(result)
+        guard !stem.isEmpty else { return nil }
+        return stem + ".mp4"
     }
 
     /// Remove characters that are invalid on macOS file paths.
@@ -30,10 +35,28 @@ struct FilenameFormatter {
     }
 
     /// If `desiredName` already exists in `directory`, append " (1)", " (2)", etc.
-    func resolveCollision(directoryURL: URL, desiredName: String) -> URL {
+    /// Pass the file being renamed as `excluding` so that a file already named per
+    /// the pattern doesn't collide with itself and get pointlessly bumped to " (1)".
+    func resolveCollision(directoryURL: URL, desiredName: String, excluding sourceURL: URL? = nil) -> URL {
         let fm = FileManager.default
+
+        func isSource(_ candidate: URL) -> Bool {
+            guard let source = sourceURL else { return false }
+            if candidate.standardizedFileURL.path == source.standardizedFileURL.path {
+                return true
+            }
+            // Same file reached via a different spelling (e.g. only case differs on a
+            // case-insensitive volume): compare filesystem identity of what's on disk.
+            guard
+                let idA = try? candidate.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
+                let idB = try? source.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
+                let a = idA as? NSObject, let b = idB as? NSObject
+            else { return false }
+            return a.isEqual(b)
+        }
+
         var url = directoryURL.appendingPathComponent(desiredName)
-        guard fm.fileExists(atPath: url.path) else { return url }
+        guard fm.fileExists(atPath: url.path), !isSource(url) else { return url }
 
         let stem = (desiredName as NSString).deletingPathExtension
         let ext  = (desiredName as NSString).pathExtension
@@ -43,7 +66,7 @@ struct FilenameFormatter {
             let name = "\(stem) (\(counter)).\(ext)"
             url = directoryURL.appendingPathComponent(name)
             counter += 1
-        } while fm.fileExists(atPath: url.path)
+        } while fm.fileExists(atPath: url.path) && !isSource(url)
 
         return url
     }

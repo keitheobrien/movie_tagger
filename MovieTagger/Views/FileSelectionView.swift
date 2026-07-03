@@ -75,7 +75,9 @@ struct FileSelectionView: View {
                     }
                 } else {
                     Button {
-                        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                        // macOS 13 renamed the responder to showSettingsWindow:
+                        // (showPreferencesWindow: silently no-ops on Ventura).
+                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                     } label: {
                         Image(systemName: "gearshape")
                             .font(.title2)
@@ -103,6 +105,13 @@ struct FileSelectionView: View {
     }
 
     private func selectFile(_ url: URL) {
+        // A different file invalidates any in-progress edit session: the model's
+        // resolution and edits are file-specific. (Re-selecting the same file keeps
+        // the session so Back -> re-select same movie preserves edits.)
+        if appState.selectedFileURL != url {
+            appState.movieEditModel = nil
+            appState.selectedDetails = nil
+        }
         appState.selectedFileURL = url
 
         // Basic media info + resolution detection

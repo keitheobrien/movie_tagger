@@ -100,6 +100,14 @@ struct MovieSearchView: View {
     // MARK: - Select movie
 
     private func selectMovie(_ result: TMDbSearchResult) {
+        // Re-selecting the movie already being edited (e.g. after pressing Back):
+        // return to the existing edit session instead of rebuilding the model,
+        // so the user's edits survive the round trip.
+        if let existing = appState.movieEditModel, existing.tmdbId == String(result.id) {
+            appState.currentScreen = .reviewEdit
+            return
+        }
+
         guard let client = appState.tmdbClient else { return }
         isLoadingDetails = true
 

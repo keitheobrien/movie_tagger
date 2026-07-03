@@ -125,16 +125,33 @@ struct ProgressResultView: View {
                     progressHandler: { @MainActor p in self.progress = p }
                 )
 
-                // Step 2: Rename if requested (instant move, no data copied)
+                // Step 2: Rename if requested (instant move, no data copied).
+                // formatIfValid returns nil for an empty/invalid pattern — skip the
+                // rename rather than produce an invisible ".mp4" dotfile.
                 var finalURL = inputURL
-                if model.renameFile {
+                if model.renameFile,
+                   let desiredName = formatter.formatIfValid(pattern: model.namingPattern, model: model) {
                     let directory = inputURL.deletingLastPathComponent()
-                    let desiredName = formatter.format(pattern: model.namingPattern, model: model)
-                    let targetURL = formatter.resolveCollision(directoryURL: directory, desiredName: desiredName)
+                    let targetURL = formatter.resolveCollision(
+                        directoryURL: directory, desiredName: desiredName, excluding: inputURL
+                    )
 
-                    if targetURL != inputURL {
-                        try FileManager.default.moveItem(at: inputURL, to: targetURL)
-                        finalURL = targetURL
+                    if targetURL.standardizedFileURL.path != inputURL.standardizedFileURL.path {
+                        do {
+                            try FileManager.default.moveItem(at: inputURL, to: targetURL)
+                            finalURL = targetURL
+                        } catch {
+                            // Metadata was already written successfully — report the
+                            // rename failure as exactly that, not as a write failure.
+                            await MainActor.run {
+                                outputURL = inputURL
+                                isComplete = true
+                                appState.showError(
+                                    "Metadata was written, but the file could not be renamed: \(error.localizedDescription)"
+                                )
+                            }
+                            return
+                        }
                     }
                 }
 
