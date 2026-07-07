@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @main
 struct MovieTaggerApp: App {
     @StateObject private var appState = AppState()
+    @StateObject private var updateManager = UpdateManager()
 
     var body: some Scene {
         // Single-window app by design: Window (not WindowGroup) removes the
@@ -13,6 +14,7 @@ struct MovieTaggerApp: App {
         Window("MovieTagger", id: "main") {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(updateManager)
                 .frame(minWidth: 700, minHeight: 500)
         }
         .defaultSize(width: 800, height: 600)
@@ -20,11 +22,15 @@ struct MovieTaggerApp: App {
             CommandGroup(replacing: .newItem) {
                 OpenFileCommand(appState: appState)
             }
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand(updater: updateManager)
+            }
         }
 
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .environmentObject(updateManager)
         }
     }
 }
@@ -46,6 +52,22 @@ private struct OpenFileCommand: View {
             }
         }
         .keyboardShortcut("o")
+    }
+}
+
+// MARK: - Check for Updates command
+
+private struct CheckForUpdatesCommand: View {
+    @ObservedObject var updater: UpdateManager
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Check for Updates\u{2026}") {
+            // The prompt sheet lives on the main window — make sure it exists.
+            openWindow(id: "main")
+            Task { await updater.checkInteractively(origin: .menu) }
+        }
+        .disabled(updater.phase == .checking || updater.isBusy)
     }
 }
 

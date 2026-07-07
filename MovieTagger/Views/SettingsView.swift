@@ -2,6 +2,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var updater: UpdateManager
+    @Environment(\.openWindow) private var openWindow
+    @State private var autoCheckUpdates = true
     @State private var apiKey = ""
     @State private var lastAttemptedKey = ""
     @State private var showApiKey = false
@@ -91,6 +94,31 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
 
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $autoCheckUpdates)
+                    .onChange(of: autoCheckUpdates) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: UpdateManager.autoCheckKey)
+                    }
+
+                HStack(spacing: 10) {
+                    Button("Check Now") {
+                        Task {
+                            await updater.checkInteractively(origin: .settings)
+                            // The prompt sheet lives on the main window — bring
+                            // it (back) up if an update was found.
+                            if updater.showUpdatePrompt { openWindow(id: "main") }
+                        }
+                    }
+                    .disabled(updater.phase == .checking || updater.isBusy)
+
+                    updateStatus
+                }
+
+                Text("Version \(updater.currentVersionString)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             Section("Attribution") {
                 Text("This product uses the TMDb API but is not endorsed or certified by TMDb.")
                     .font(.caption)
@@ -106,6 +134,9 @@ struct SettingsView: View {
             apiKey = appState.apiKey
             language = appState.language
             namingPattern = appState.defaultNamingPattern
+            // Default on when the preference has never been set.
+            autoCheckUpdates = UserDefaults.standard.object(forKey: UpdateManager.autoCheckKey) == nil
+                || UserDefaults.standard.bool(forKey: UpdateManager.autoCheckKey)
         }
         .onDisappear {
             // Never silently drop a pasted key on Cmd+W during onboarding: if the
@@ -127,6 +158,35 @@ struct SettingsView: View {
     private var keyStatusIsFailed: Bool {
         if case .failed = keyStatus { return true }
         return false
+    }
+
+    @ViewBuilder
+    private var updateStatus: some View {
+        switch updater.phase {
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking\u{2026}")
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Checking for updates")
+        case .upToDate:
+            Text("You\u{2019}re up to date.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        case .failed(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.red)
+        default:
+            if let release = updater.availableRelease {
+                Text("\(release.tagName) is available.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
     }
 
     @ViewBuilder

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var updater: UpdateManager
 
     var body: some View {
         Group {
@@ -21,6 +22,55 @@ struct ContentView: View {
         } message: {
             Text(appState.errorMessage ?? "An unknown error occurred.")
         }
+        .sheet(isPresented: $updater.showUpdatePrompt) {
+            if let release = updater.availableRelease {
+                UpdatePromptView(release: release)
+                    .environmentObject(updater)
+            }
+        }
+        // Feedback for the menu-initiated check (Settings has its own status line).
+        .alert("You\u{2019}re up to date", isPresented: upToDateAlertBinding) {
+            Button("OK") { updater.phase = .idle }
+        } message: {
+            Text("MovieTagger \(updater.currentVersionString) is the latest version.")
+        }
+        .alert("Update Check Failed", isPresented: checkFailedAlertBinding) {
+            Button("OK") { updater.phase = .idle }
+        } message: {
+            Text(checkFailureMessage)
+        }
+        .task {
+            // Give launch a moment before phoning home.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await updater.checkAutomatically()
+        }
+    }
+
+    // These alerts serve the menu-initiated check only — Settings-initiated
+    // checks report through Settings' own inline status line.
+    private var upToDateAlertBinding: Binding<Bool> {
+        Binding(
+            get: { updater.phase == .upToDate && updater.menuInitiatedCheck },
+            set: { if !$0 { updater.phase = .idle } }
+        )
+    }
+
+    private var checkFailedAlertBinding: Binding<Bool> {
+        Binding(
+            get: {
+                // Failures during an update are shown inside the sheet instead.
+                if case .failed = updater.phase,
+                   !updater.showUpdatePrompt,
+                   updater.menuInitiatedCheck { return true }
+                return false
+            },
+            set: { if !$0 { updater.phase = .idle } }
+        )
+    }
+
+    private var checkFailureMessage: String {
+        if case .failed(let message) = updater.phase { return message }
+        return ""
     }
 
     @ViewBuilder
