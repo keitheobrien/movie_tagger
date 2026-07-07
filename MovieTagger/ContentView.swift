@@ -46,9 +46,11 @@ struct ContentView: View {
         }
     }
 
+    // These alerts serve the menu-initiated check only — Settings-initiated
+    // checks report through Settings' own inline status line.
     private var upToDateAlertBinding: Binding<Bool> {
         Binding(
-            get: { updater.phase == .upToDate },
+            get: { updater.phase == .upToDate && updater.menuInitiatedCheck },
             set: { if !$0 { updater.phase = .idle } }
         )
     }
@@ -57,7 +59,9 @@ struct ContentView: View {
         Binding(
             get: {
                 // Failures during an update are shown inside the sheet instead.
-                if case .failed = updater.phase, !updater.showUpdatePrompt { return true }
+                if case .failed = updater.phase,
+                   !updater.showUpdatePrompt,
+                   updater.menuInitiatedCheck { return true }
                 return false
             },
             set: { if !$0 { updater.phase = .idle } }

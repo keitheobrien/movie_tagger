@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var updater: UpdateManager
+    @Environment(\.openWindow) private var openWindow
     @State private var autoCheckUpdates = true
     @State private var apiKey = ""
     @State private var lastAttemptedKey = ""
@@ -101,9 +102,14 @@ struct SettingsView: View {
 
                 HStack(spacing: 10) {
                     Button("Check Now") {
-                        Task { await updater.checkInteractively() }
+                        Task {
+                            await updater.checkInteractively(origin: .settings)
+                            // The prompt sheet lives on the main window — bring
+                            // it (back) up if an update was found.
+                            if updater.showUpdatePrompt { openWindow(id: "main") }
+                        }
                     }
-                    .disabled(updater.phase == .checking)
+                    .disabled(updater.phase == .checking || updater.isBusy)
 
                     updateStatus
                 }

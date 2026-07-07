@@ -15,6 +15,11 @@ struct GitHubRelease: Decodable, Equatable {
         let name: String
         let browserDownloadUrl: String
         let size: Int
+
+        enum CodingKeys: String, CodingKey {
+            case name, size
+            case browserDownloadUrl = "browser_download_url"
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -31,12 +36,14 @@ struct GitHubRelease: Decodable, Equatable {
 
 // MARK: - Version comparison
 
-/// Numeric dotted-version comparison ("1.10" > "1.9", tolerates a leading "v").
+/// Numeric dotted-version comparison ("1.10" > "1.9", tolerates a leading "v"
+/// and pre-release suffixes like "2.0-beta" by parsing the leading numeric core).
 struct AppVersion: Comparable, Equatable {
     let components: [Int]
 
     init?(_ string: String) {
-        let cleaned = string.hasPrefix("v") ? String(string.dropFirst()) : string
+        var cleaned = string.hasPrefix("v") ? String(string.dropFirst()) : string
+        cleaned = String(cleaned.prefix { $0.isNumber || $0 == "." })
         let parts = cleaned.split(separator: ".").map { Int($0) }
         guard !parts.isEmpty, !parts.contains(nil) else { return nil }
         components = parts.compactMap { $0 }
@@ -88,10 +95,10 @@ enum UpdateError: LocalizedError {
 ///
 /// Security model: the downloaded bundle is REQUIRED to satisfy
 /// "anchor apple generic and certificate leaf[subject.OU] = TEAM_ID" (checked
-/// with SecStaticCode against all architectures and nested code) before it is
-/// allowed anywhere near the install location. The quarantine attribute is
-/// only removed after that check passes. A release that is not newer than the
-/// running version is never offered (no downgrades).
+/// with SecStaticCode against all architectures and nested code, strict
+/// validation) before it is allowed anywhere near the install location. The
+/// quarantine attribute is only removed after that check passes. A release
+/// that is not newer than the running version is never offered (no downgrades).
 @MainActor
 final class UpdateManager: ObservableObject {
 
@@ -104,9 +111,17 @@ final class UpdateManager: ObservableObject {
         case failed(String)
     }
 
+    /// Where an interactive check was started from — controls which surface
+    /// shows the outcome (menu -> main-window alerts; Settings has its own
+    /// inline status line).
+    enum CheckOrigin { case menu, settings }
+
     @Published var phase: Phase = .idle
     @Published var availableRelease: GitHubRelease?
     @Published var showUpdatePrompt = false
+    @Published var menuInitiatedCheck = false
+
+    private var updateTask: Task<Void, Never>?
 
     static let repo = "keitheobrien/movie_tagger"
     static let teamID = "9R236BB67S"
@@ -118,6 +133,12 @@ final class UpdateManager: ObservableObject {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
 
+    /// True while an update is being downloaded or installed.
+    var isBusy: Bool {
+        if case .downloading = phase { return true }
+        return phase == .installing
+    }
+
     // MARK: Checking
 
     /// Launch-time check: silent unless a newer release is found.
@@ -127,6 +148,7 @@ final class UpdateManager: ObservableObject {
         let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date ?? .distantPast
         guard Date().timeIntervalSince(last) > Self.checkInterval else { return }
 
+        menuInitiatedCheck = false
         if let release = try? await fetchNewerRelease() {
             availableRelease = release
             showUpdatePrompt = true
@@ -135,7 +157,9 @@ final class UpdateManager: ObservableObject {
     }
 
     /// User-initiated check: everything is surfaced.
-    func checkInteractively() async {
+    func checkInteractively(origin: CheckOrigin = .settings) async {
+        guard phase != .checking, !isBusy else { return }
+        menuInitiatedCheck = origin == .menu
         phase = .checking
         do {
             if let release = try await fetchNewerRelease() {
@@ -151,11 +175,10 @@ final class UpdateManager: ObservableObject {
     }
 
     /// Returns the latest release only if it is strictly newer than the
-    /// running version. MOVIETAGGER_FORCE_UPDATE=1 (testing) skips the
-    /// version gate — but never the signature gate.
+    /// running version. In DEBUG builds, MOVIETAGGER_FORCE_UPDATE=1 skips the
+    /// version gate (never the signature gate) so the full flow can be tested
+    /// against the current release.
     private func fetchNewerRelease() async throws -> GitHubRelease? {
-        UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
-
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -164,7 +187,15 @@ final class UpdateManager: ObservableObject {
         }
         let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
 
+        // Stamp only after a successful check, so a launch-time network
+        // failure doesn't suppress retries for the next ~20 hours.
+        UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
+
+        #if DEBUG
         let force = ProcessInfo.processInfo.environment["MOVIETAGGER_FORCE_UPDATE"] == "1"
+        #else
+        let force = false
+        #endif
         guard let remote = AppVersion(release.tagName),
               let current = AppVersion(currentVersionString) else { return force ? release : nil }
         return (remote > current || force) ? release : nil
@@ -172,29 +203,71 @@ final class UpdateManager: ObservableObject {
 
     // MARK: Update flow (download -> verify -> install -> relaunch)
 
-    func performUpdate(_ release: GitHubRelease) async {
+    func performUpdate(_ release: GitHubRelease) {
+        guard updateTask == nil else { return }
+        updateTask = Task {
+            await runUpdate(release)
+            updateTask = nil
+        }
+    }
+
+    /// Cancels a download in progress. Installation is the point of no return.
+    func cancelUpdate() {
+        updateTask?.cancel()
+    }
+
+    private func runUpdate(_ release: GitHubRelease) async {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let tmp = FileManager.default.temporaryDirectory
+        let zipURL = tmp.appendingPathComponent("MovieTagger-update-\(pid).zip")
+        let extractDir = tmp.appendingPathComponent("MovieTagger-update-extract-\(pid)")
+
+        func cleanupTemp() {
+            try? FileManager.default.removeItem(at: zipURL)
+            try? FileManager.default.removeItem(at: extractDir)
+        }
+
         do {
             guard let asset = release.appAsset else { throw UpdateError.noAsset }
 
             phase = .downloading(0)
-            let zipURL = try await download(asset)
+            try await Self.download(asset, to: zipURL) { progress in
+                Task { @MainActor [weak self] in
+                    guard let self, case .downloading = self.phase else { return }
+                    self.phase = .downloading(progress)
+                }
+            }
 
             phase = .installing
             let newApp = try await Task.detached(priority: .userInitiated) {
-                let extracted = try Self.extractApp(from: zipURL)
-                try Self.verifyCodeSignature(at: extracted, teamID: Self.teamID)
-                Self.removeQuarantine(at: extracted)   // only after verification
-                return extracted
+                let app = try Self.extractApp(from: zipURL, into: extractDir)
+                try Self.verifyCodeSignature(at: app, teamID: Self.teamID)
+                Self.removeQuarantine(at: app)   // only after verification
+                return app
             }.value
 
             let installedURL = try Self.install(newApp: newApp)
+            cleanupTemp()   // before relaunch — terminate may not return
             relaunch(at: installedURL)
+        } catch is CancellationError {
+            cleanupTemp()
+            phase = .idle
+        } catch let error as URLError where error.code == .cancelled {
+            cleanupTemp()
+            phase = .idle
         } catch {
+            cleanupTemp()
             phase = .failed(error.localizedDescription)
         }
     }
 
-    private func download(_ asset: GitHubRelease.Asset) async throws -> URL {
+    /// Chunked download off the main actor; progress lands back on it via the
+    /// callback. Cooperatively cancellable.
+    private nonisolated static func download(
+        _ asset: GitHubRelease.Asset,
+        to destination: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
         guard let url = URL(string: asset.browserDownloadUrl), url.scheme == "https" else {
             throw UpdateError.downloadFailed("invalid asset URL")
         }
@@ -205,35 +278,32 @@ final class UpdateManager: ObservableObject {
         }
 
         let expected = http.expectedContentLength > 0 ? Int(http.expectedContentLength) : asset.size
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MovieTagger-update-\(ProcessInfo.processInfo.processIdentifier).zip")
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
 
         var received = 0
-        var buffer = Data(capacity: 128 * 1024)
+        var buffer = Data(capacity: 256 * 1024)
         for try await byte in bytes {
             buffer.append(byte)
-            if buffer.count >= 128 * 1024 {
+            if buffer.count >= 256 * 1024 {
+                try Task.checkCancellation()
                 try handle.write(contentsOf: buffer)
                 received += buffer.count
                 buffer.removeAll(keepingCapacity: true)
                 if expected > 0 {
-                    phase = .downloading(min(1, Double(received) / Double(expected)))
+                    progress(min(1, Double(received) / Double(expected)))
                 }
             }
         }
         try handle.write(contentsOf: buffer)
-        phase = .downloading(1)
-        return destination
+        progress(1)
     }
 
-    private nonisolated static func extractApp(from zipURL: URL) throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MovieTagger-update-extract-\(ProcessInfo.processInfo.processIdentifier)")
-        try? FileManager.default.removeItem(at: dir)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    private nonisolated static func extractApp(from zipURL: URL, into dir: URL) throws -> URL {
+        let fm = FileManager.default
+        try? fm.removeItem(at: dir)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let ditto = Process()
         ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
@@ -244,9 +314,11 @@ final class UpdateManager: ObservableObject {
             throw UpdateError.extractionFailed("ditto exited with status \(ditto.terminationStatus)")
         }
 
+        // Must be a real directory bundle — not a symlink pointing elsewhere.
         let app = dir.appendingPathComponent("MovieTagger.app")
-        guard FileManager.default.fileExists(atPath: app.path) else {
-            throw UpdateError.extractionFailed("archive did not contain MovieTagger.app")
+        let values = try? app.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        guard values?.isSymbolicLink != true, values?.isDirectory == true else {
+            throw UpdateError.extractionFailed("archive did not contain a valid MovieTagger.app bundle")
         }
         return app
     }
@@ -254,9 +326,6 @@ final class UpdateManager: ObservableObject {
     /// Hard gate: the bundle must be validly signed by THIS team. A tampered,
     /// re-signed, or unsigned download is rejected and deleted.
     private nonisolated static func verifyCodeSignature(at appURL: URL, teamID: String) throws {
-        defer {
-            // If verification threw, don't leave the suspect bundle around.
-        }
         var staticCode: SecStaticCode?
         var status = SecStaticCodeCreateWithPath(appURL as CFURL, SecCSFlags(), &staticCode)
         guard status == errSecSuccess, let code = staticCode else {
@@ -322,10 +391,16 @@ final class UpdateManager: ObservableObject {
     }
 
     private func relaunch(at appURL: URL) {
+        let pid = ProcessInfo.processInfo.processIdentifier
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // "$0" keeps the path out of shell-interpretation entirely.
-        sh.arguments = ["-c", "sleep 0.7; /usr/bin/open \"$0\"", appURL.path]
+        // Wait for THIS process to fully exit (no fixed-sleep race), then launch
+        // the new copy. "$0" keeps the path out of shell interpretation.
+        sh.arguments = [
+            "-c",
+            "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"",
+            appURL.path,
+        ]
         try? sh.run()
         NSApp.terminate(nil)
     }

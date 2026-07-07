@@ -65,9 +65,9 @@ private struct CheckForUpdatesCommand: View {
         Button("Check for Updates\u{2026}") {
             // The prompt sheet lives on the main window — make sure it exists.
             openWindow(id: "main")
-            Task { await updater.checkInteractively() }
+            Task { await updater.checkInteractively(origin: .menu) }
         }
-        .disabled(updater.phase == .checking)
+        .disabled(updater.phase == .checking || updater.isBusy)
     }
 }
 

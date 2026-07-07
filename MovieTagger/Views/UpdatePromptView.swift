@@ -43,6 +43,10 @@ struct UpdatePromptView: View {
                 .padding()
         }
         .frame(width: 480)
+        // Escape must never silently detach the UI from a running update:
+        // downloads are cancelled via the Cancel button; installation is the
+        // point of no return.
+        .interactiveDismissDisabled(updater.isBusy)
     }
 
     private var versionLabel: String {
@@ -63,9 +67,14 @@ struct UpdatePromptView: View {
         case .downloading(let progress):
             VStack(spacing: 6) {
                 ProgressView(value: progress)
-                Text("Downloading\u{2026} \(Int(progress * 100))%")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                HStack {
+                    Text("Downloading\u{2026} \(Int(progress * 100))%")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Cancel") { updater.cancelUpdate() }
+                        .keyboardShortcut(.cancelAction)
+                }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Downloading update, \(Int((updaterProgress) * 100)) percent")
@@ -101,11 +110,9 @@ struct UpdatePromptView: View {
                 Spacer()
                 Button("Later") { dismissPrompt() }
                     .keyboardShortcut(.cancelAction)
-                Button("Update Now") {
-                    Task { await updater.performUpdate(release) }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                Button("Update Now") { updater.performUpdate(release) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }
@@ -120,8 +127,9 @@ struct UpdatePromptView: View {
     }
 
     private func dismissPrompt() {
+        // Keep availableRelease: the sheet content stays valid through the
+        // dismissal animation, and Settings keeps showing "vX is available".
         updater.showUpdatePrompt = false
-        updater.availableRelease = nil
         if case .failed = updater.phase { updater.phase = .idle }
     }
 }
