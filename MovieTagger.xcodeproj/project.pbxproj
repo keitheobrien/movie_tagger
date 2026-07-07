@@ -19,6 +19,8 @@
 		9E45D362A7B32F32E7044558 /* FileSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60E4E00E490D9319E8690F6D /* FileSelectionView.swift */; };
 		A7A0B632B2C15DF0905257ED /* MovieTaggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273525CE5D3CCCB5BEAC5DC3 /* MovieTaggerApp.swift */; };
 		B434ADF07F0ABE3D71673F63 /* FilenameFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472C0F95D084EC8287E9C944 /* FilenameFormatter.swift */; };
+		C25A6A40325C2B15ED1D6B8B /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFCA5898C48E4E60A219195D /* UpdateChecker.swift */; };
+		C868B8B7F7245D0D9E5D3719 /* UpdatePromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFDEC4DFCEB0EBC60F2A3459 /* UpdatePromptView.swift */; };
 		E812C2C4B9B934E504331BC6 /* MovieEditModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7940451B273702782B4F434B /* MovieEditModel.swift */; };
 		FAFD5F393BD0EE73A7AF41A4 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C6D19E2BCF4E347F2EC6A3F /* ContentView.swift */; };
 /* End PBXBuildFile section */
@@ -40,6 +42,8 @@
 		8B31F45201FCDF402A8D5F86 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8E1151C0791C7FD3C268D5AD /* MovieTagger.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MovieTagger.entitlements; sourceTree = "<group>"; };
 		B575FF7CD52C6F79249969B0 /* ProgressResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressResultView.swift; sourceTree = "<group>"; };
+		DFCA5898C48E4E60A219195D /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		DFDEC4DFCEB0EBC60F2A3459 /* UpdatePromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdatePromptView.swift; sourceTree = "<group>"; };
 		FE0C5A1E17C2E6E290E8228C /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -82,6 +86,7 @@
 				FE0C5A1E17C2E6E290E8228C /* KeychainHelper.swift */,
 				23404B25651E4B5C5027E93C /* MetadataWriter.swift */,
 				7466D4D531AD72FED2283CAA /* TMDbClient.swift */,
+				DFCA5898C48E4E60A219195D /* UpdateChecker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -103,6 +108,7 @@
 				B575FF7CD52C6F79249969B0 /* ProgressResultView.swift */,
 				03344FEEF795BB6E397DC8DC /* ReviewEditView.swift */,
 				6C86E7547CAFC39CDDF0B429 /* SettingsView.swift */,
+				DFDEC4DFCEB0EBC60F2A3459 /* UpdatePromptView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -187,6 +193,8 @@
 				9D59DAA1361163C100630E8F /* SettingsView.swift in Sources */,
 				16D6D0F66E04B62C497A039D /* TMDbClient.swift in Sources */,
 				90895C95067D62AA35D2635E /* TMDbModels.swift in Sources */,
+				C25A6A40325C2B15ED1D6B8B /* UpdateChecker.swift in Sources */,
+				C868B8B7F7245D0D9E5D3719 /* UpdatePromptView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
