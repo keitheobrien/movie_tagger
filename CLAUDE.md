@@ -50,7 +50,14 @@ Services (all in `MovieTagger/Services/`):
 - **`MetadataWriter`** — writes MP4 atoms directly via `FileHandle`, **in place and irreversibly**. This is the highest-risk code in the repo; the UI requires explicit confirmation before invoking it.
 - **`FilenameFormatter`** — token substitution + collision resolution. Two invariants: `formatIfValid` returns `nil` for patterns that produce an empty/dot-leading stem (callers must then *skip* renaming, never produce a dotfile), and `resolveCollision(excluding:)` must exclude the source file so a file already named per the pattern doesn't self-collide into "Name (1)". **The rename preview in ReviewEditView must run the identical formatter+collision logic as the actual write** — they may never disagree.
 - **`KeychainHelper`** — despite the name, not the system Keychain: an encrypted file in Application Support (ChaCha20-Poly1305, key derived from the hardware UUID, so the file is machine-bound).
-- **`UpdateChecker`** — `UpdateManager` (@MainActor) drives auto-update from this repo's public GitHub releases. Security gate: the downloaded bundle must pass `SecStaticCode` validation against a requirement pinned to the team ID *before* install; quarantine is stripped only after that check; downgrades are never offered. `MOVIETAGGER_FORCE_UPDATE=1` (DEBUG builds only) skips the version gate for end-to-end testing — never the signature gate.
+- **`UpdateChecker`** — `UpdateManager` (@MainActor) drives auto-update from this repo's public GitHub releases. Security gate: the downloaded bundle must pass `SecStaticCode` validation against a requirement pinned to the team ID *before* install; quarantine is stripped only after that check; downgrades are never offered. **`NSApp.terminate` is silently refused while a sheet or confirmationDialog is presented** (reproduced; alerts don't block) — the updater dismisses its sheet first and falls back to `exit(0)`. The old bundle must stay on disk until the process exits; the relaunch helper removes it afterwards.
+
+  End-to-end test of the update flow (DEBUG builds only): launch the Debug binary *directly* with `MOVIETAGGER_FORCE_UPDATE=1 MOVIETAGGER_AUTO_ACCEPT_UPDATE=1` (force also bypasses the daily throttle; `open` can't pass env). It downloads the latest release, verifies, installs over the Debug bundle, self-terminates, and relaunches; milestones land in `$TMPDIR/movietagger-updater.log` and the unified log. Afterwards `rm -rf` the Debug products bundle — it's now the read-only release bundle and the next build will fail to overwrite it.
+
+## Shell gotchas in Claude Code's Bash tool
+
+- Commands run through **zsh**, where `log` is a **builtin** — `log show …` silently prints "too many arguments" and returns nothing. Always call **`/usr/bin/log`** for the unified log.
+- The `osxkeychain` git credential helper can hang on an invisible dialog; push with `git -c credential.helper= -c credential.helper='!gh auth git-credential' push …`.
 
 ## Session-state invariants (bugs have hidden here)
 
