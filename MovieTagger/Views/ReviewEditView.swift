@@ -22,8 +22,10 @@ private struct ReviewEditContent: View {
     @State private var showPosterPicker = false
     @State private var showCancelConfirm = false
     @State private var showWriteConfirm = false
-    @State private var resolvedPreview: String?
+    @State private var writeConfirmName: String?
+    @State private var isPreparingWrite = false
     @State private var isReloadingPosters = false
+    @State private var formReady = false
 
     private let formatter = FilenameFormatter()
 
@@ -41,20 +43,32 @@ private struct ReviewEditContent: View {
             Divider()
 
             ScrollView {
-                HStack(alignment: .top, spacing: 24) {
-                    posterSection
-                    fieldsSection
+                // Mounting the full form (a dozen text fields, five FlowLayouts)
+                // costs ~110-135 ms on Apple Silicon and more on Intel. Commit a
+                // cheap first frame so the screen switch is instant, then build
+                // the form on the next run-loop turn.
+                if formReady {
+                    HStack(alignment: .top, spacing: 24) {
+                        posterSection
+                        fieldsSection
+                    }
+                    .padding()
+
+                    Divider().padding(.horizontal)
+
+                    namingSection.padding()
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 300)
                 }
-                .padding()
-
-                Divider().padding(.horizontal)
-
-                namingSection.padding()
             }
 
             Divider()
 
             bottomBar
+        }
+        .onAppear {
+            DispatchQueue.main.async { formReady = true }
         }
     }
 
@@ -63,7 +77,7 @@ private struct ReviewEditContent: View {
     @ViewBuilder
     private var posterSection: some View {
         VStack(spacing: 12) {
-            if let data = model.posterImageData, let img = NSImage(data: data) {
+            if let img = model.posterImage {
                 Image(nsImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -269,20 +283,7 @@ private struct ReviewEditContent: View {
                     }
                 }
 
-                HStack {
-                    Text("Preview:").foregroundColor(.secondary)
-                    if let name = formattedName {
-                        Text(resolvedPreview ?? name).fontWeight(.medium)
-                    } else {
-                        Text("Invalid pattern \u{2014} file won\u{2019}t be renamed")
-                            .foregroundColor(.orange)
-                    }
-                }
-                .task(id: previewTaskKey) {
-                    // Collision resolution stats the filesystem — keep it off the
-                    // per-keystroke render path.
-                    resolvedPreview = resolveFinalName()
-                }
+                RenamePreview(formattedName: formattedName, sourceURL: appState.selectedFileURL)
             }
         }
     }
@@ -292,20 +293,23 @@ private struct ReviewEditContent: View {
         formatter.formatIfValid(pattern: model.namingPattern, model: model)
     }
 
-    private var previewTaskKey: String {
-        (formattedName ?? "\u{0}") + "|" + (appState.selectedFileURL?.path ?? "")
-    }
-
-    /// The exact name the rename step will produce — same formatting AND the same
-    /// collision resolution as the actual write, so the preview never lies.
-    private func resolveFinalName() -> String? {
-        guard let name = formattedName else { return nil }
+    /// The exact name the rename step will produce — same formatting and the same
+    /// collision resolution as the actual write. Stats the filesystem, so it runs
+    /// off the main actor and is only called from button actions, never `body`.
+    private func resolvedRenameName() async -> String? {
+        guard model.renameFile, let name = formattedName else { return nil }
         guard let source = appState.selectedFileURL else { return name }
-        return formatter.resolveCollision(
+        return await formatter.resolveCollisionOffMain(
             directoryURL: source.deletingLastPathComponent(),
             desiredName: name,
             excluding: source
         ).lastPathComponent
+    }
+
+    /// Everything the rename outcome depends on — compared before/after the
+    /// slow stat so a confirmation never describes inputs the user has changed.
+    private var renameInputs: (Bool, String) {
+        (model.renameFile, formattedName ?? "")
     }
 
     // MARK: - Bottom bar
@@ -330,8 +334,32 @@ private struct ReviewEditContent: View {
                     Text("Your metadata edits will be lost.")
                 }
 
-            Button("Write Metadata") { showWriteConfirm = true }
-                .buttonStyle(.borderedProminent)
+            Button {
+                guard !isPreparingWrite else { return }
+                isPreparingWrite = true
+                Task {
+                    defer { isPreparingWrite = false }
+                    // Resolve right before asking so the confirmation names the
+                    // exact file the write will produce. The stat can take a
+                    // while on a cold volume — if the user edited the inputs
+                    // meanwhile, resolve again rather than describe a stale rename.
+                    var inputs: (Bool, String)
+                    var name: String?
+                    repeat {
+                        inputs = renameInputs
+                        name = await resolvedRenameName()
+                    } while inputs != renameInputs
+                    writeConfirmName = name
+                    showWriteConfirm = true
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if isPreparingWrite { ProgressView().controlSize(.small) }
+                    Text("Write Metadata")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isPreparingWrite)
                 .confirmationDialog(
                     "Write metadata to \u{201C}\(appState.selectedFileURL?.lastPathComponent ?? "file")\u{201D}?",
                     isPresented: $showWriteConfirm
@@ -345,13 +373,62 @@ private struct ReviewEditContent: View {
         .padding()
     }
 
+    // Evaluated from `body` (confirmationDialog's message closure is
+    // non-escaping) — must stay free of I/O; the name was resolved at click time.
     private var writeConfirmMessage: String {
         var message = "Metadata is written directly into the file and can\u{2019}t be undone."
-        if model.renameFile, let preview = resolveFinalName(),
-           preview != appState.selectedFileURL?.lastPathComponent {
-            message += " The file will then be renamed to \u{201C}\(preview)\u{201D}."
+        if let name = writeConfirmName, name != appState.selectedFileURL?.lastPathComponent {
+            message += " The file will then be renamed to \u{201C}\(name)\u{201D}."
         }
         return message
+    }
+}
+
+// MARK: - Rename preview row
+
+/// Its own view with its own state so resolving the collision (a filesystem
+/// stat, done off the main actor) re-renders only this row — not the entire
+/// form on every keystroke.
+private struct RenamePreview: View {
+    let formattedName: String?
+    let sourceURL: URL?
+    @State private var resolved: (key: String, name: String)?
+
+    private let formatter = FilenameFormatter()
+
+    var body: some View {
+        HStack {
+            Text("Preview:").foregroundColor(.secondary)
+            if let name = displayName {
+                Text(name).fontWeight(.medium)
+            } else {
+                Text("Invalid pattern \u{2014} file won\u{2019}t be renamed")
+                    .foregroundColor(.orange)
+            }
+        }
+        .task(id: taskKey) {
+            guard let name = formattedName, let source = sourceURL else { return }
+            let key = taskKey
+            let resolvedName = await formatter.resolveCollisionOffMain(
+                directoryURL: source.deletingLastPathComponent(),
+                desiredName: name,
+                excluding: source
+            ).lastPathComponent
+            guard !Task.isCancelled else { return }
+            resolved = (key, resolvedName)
+        }
+    }
+
+    private var taskKey: String {
+        (formattedName ?? "\u{0}") + "|" + (sourceURL?.path ?? "")
+    }
+
+    /// Never show a resolved name that belongs to a previous pattern/title —
+    /// fall back to the plain formatted name until this key's stat returns.
+    private var displayName: String? {
+        guard let name = formattedName else { return nil }
+        if let resolved, resolved.key == taskKey { return resolved.name }
+        return name
     }
 }
 

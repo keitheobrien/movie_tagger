@@ -6,6 +6,10 @@ struct MovieSearchView: View {
     @State private var isLoadingDetails = false
     @State private var selectedResultID: Int?
     @State private var detailsTask: Task<Void, Never>?
+    // Details are prefetched on single-click selection so Choose/double-click
+    // is usually instant; keyed by TMDb id, cleared on a new search.
+    @State private var detailsPrefetch: [Int: Task<(TMDbMovieDetails, Data), Error>] = [:]
+    @State private var prefetchDebounce: Task<Void, Never>?
     @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
@@ -97,6 +101,25 @@ struct MovieSearchView: View {
             }
             DispatchQueue.main.async { searchFieldFocused = true }
         }
+        .onChange(of: selectedResultID) { id in
+            prefetchDebounce?.cancel()
+            // No point prefetching the movie already being edited — selectMovie
+            // short-circuits to the existing session for it.
+            guard let id, appState.movieEditModel?.tmdbId != String(id) else { return }
+            prefetchDebounce = Task {
+                // Let arrow-key runs settle before hitting the network.
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard !Task.isCancelled else { return }
+                _ = detailsFetch(for: id)
+            }
+        }
+        .onChange(of: appState.language) { _ in clearPrefetch() }
+        .onDisappear {
+            // Leaving the screen aborts in-flight prefetches instead of leaving
+            // orphan downloads running into a dead view's state.
+            prefetchDebounce?.cancel()
+            clearPrefetch()
+        }
     }
 
     // MARK: - Search
@@ -120,6 +143,7 @@ struct MovieSearchView: View {
                         isSearching = false
                         return
                     }
+                    clearPrefetch()
                     appState.searchResults = response.results
                     // Only claim "No results found" for searches that actually
                     // completed — a failed search keeps its previous state.
@@ -142,6 +166,11 @@ struct MovieSearchView: View {
         detailsTask?.cancel()
         detailsTask = nil
         isLoadingDetails = false
+        prefetchDebounce?.cancel()
+        // Awaiting another task's `.value` is not a cancellation point, so
+        // cancelling the wrapper alone leaves the request running. Cancel the
+        // underlying fetch too — that's what the user asked for.
+        clearPrefetch()
     }
 
     private func selectMovie(_ result: TMDbSearchResult) {
@@ -154,16 +183,20 @@ struct MovieSearchView: View {
         }
 
         guard let client = appState.tmdbClient else { return }
+        let joinsPrefetch = detailsPrefetch[result.id] != nil
+        guard let fetch = detailsFetch(for: result.id) else { return }
         isLoadingDetails = true
 
         detailsTask = Task {
             do {
-                let (details, rawJSON) = try await client.fetchMovieDetailsWithRawJSON(
-                    id: result.id, language: appState.language
+                let (details, rawJSON) = try await loadDetails(
+                    id: result.id, fetch: fetch, retryOnFailure: joinsPrefetch
                 )
 
                 let navigatedModel = await MainActor.run { () -> MovieEditModel? in
-                    isLoadingDetails = false
+                    // A cancelled wrapper must not touch the flag: cancelDetailsLoad
+                    // already reset it, and a newer load may own it by now.
+                    if !Task.isCancelled { isLoadingDetails = false }
                     // The user may have pressed Back (or Cancel) while we were
                     // loading — never yank them forward to a screen they left.
                     guard !Task.isCancelled, appState.currentScreen == .movieSearch else {
@@ -186,20 +219,63 @@ struct MovieSearchView: View {
                 // to "whatever model is current when the download finishes".
                 Task { await fetchPosters(for: details, into: editModel, title: result.title, client: client) }
             } catch is CancellationError {
-                await MainActor.run { isLoadingDetails = false }
+                await MainActor.run { if !Task.isCancelled { isLoadingDetails = false } }
             } catch let error as URLError where error.code == .cancelled {
-                await MainActor.run { isLoadingDetails = false }
+                await MainActor.run { if !Task.isCancelled { isLoadingDetails = false } }
             } catch {
                 await MainActor.run {
-                    isLoadingDetails = false
+                    detailsPrefetch[result.id] = nil   // never cache a failure
+                    if !Task.isCancelled { isLoadingDetails = false }
+                    // The user may have cancelled or left the screen while the
+                    // request was still running — a late failure must not pop
+                    // an alert somewhere else.
+                    guard !Task.isCancelled, appState.currentScreen == .movieSearch else { return }
                     appState.showError(error.localizedDescription)
                 }
             }
         }
     }
 
+    /// Joins `fetch`. A prefetch that failed while the user was idling on the
+    /// list is evicted and retried once, so a transient network blip doesn't
+    /// cost them an error dialog and a second click.
+    private func loadDetails(
+        id: Int,
+        fetch: Task<(TMDbMovieDetails, Data), Error>,
+        retryOnFailure: Bool
+    ) async throws -> (TMDbMovieDetails, Data) {
+        do {
+            return try await fetch.value
+        } catch {
+            detailsPrefetch[id] = nil
+            if error is CancellationError { throw error }
+            if let urlError = error as? URLError, urlError.code == .cancelled { throw error }
+            guard retryOnFailure, !Task.isCancelled, let retry = detailsFetch(for: id) else { throw error }
+            return try await retry.value
+        }
+    }
+
+    /// The cached or in-flight details fetch for `id`, started if needed.
+    private func detailsFetch(for id: Int) -> Task<(TMDbMovieDetails, Data), Error>? {
+        if let existing = detailsPrefetch[id] { return existing }
+        guard let client = appState.tmdbClient else { return nil }
+        let language = appState.language
+        let task = Task { try await client.fetchMovieDetailsWithRawJSON(id: id, language: language) }
+        detailsPrefetch[id] = task
+        return task
+    }
+
+    private func clearPrefetch() {
+        detailsPrefetch.values.forEach { $0.cancel() }
+        detailsPrefetch = [:]
+    }
+
     private func fetchPosters(for details: TMDbMovieDetails, into model: MovieEditModel, title: String, client: TMDbClient) async {
         do {
+            // Fetch the picker list concurrently with the (much larger) poster
+            // download so "Choose Poster…" isn't gated on the image arriving.
+            async let images = client.fetchMovieImages(id: details.id, language: "en")
+
             if let path = details.posterPath {
                 let url = try await client.posterURL(path: path)
                 let data = try await client.fetchImageData(from: url)
@@ -209,9 +285,9 @@ struct MovieSearchView: View {
                 }
             }
 
-            let images = try await client.fetchMovieImages(id: details.id, language: "en")
+            let posters = (try await images).posters ?? []
             await MainActor.run {
-                model.availablePosters = images.posters ?? []
+                model.availablePosters = posters
             }
         } catch {
             await MainActor.run {

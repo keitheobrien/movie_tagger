@@ -58,7 +58,12 @@ class MovieEditModel: ObservableObject {
     @Published var imdbId: String
 
     // Poster
-    @Published var posterImageData: Data?
+    @Published var posterImageData: Data? {
+        didSet { posterImage = posterImageData.flatMap { NSImage(data: $0) } }
+    }
+    /// Decoded once per poster change so view bodies never construct images
+    /// (a 2000x3000 "original" JPEG costs 35-80 ms to decode per render).
+    @Published var posterImage: NSImage?
     @Published var posterURL: String?
     @Published var availablePosters: [TMDbImage] = []
     @Published var selectedPosterPath: String?

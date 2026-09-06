@@ -39,9 +39,30 @@ struct FilenameFormatter {
         return s
     }
 
+    /// Serial queue for the blocking stat calls. Keeps filesystem I/O off the
+    /// Swift cooperative thread pool (one thread per core), which a hung NAS
+    /// could otherwise park entirely, stalling every continuation in the app.
+    private static let ioQueue = DispatchQueue(label: "com.movietagger.filename-io", qos: .userInitiated)
+
+    /// `resolveCollision` with its stats run on `ioQueue` — the only form UI
+    /// code should call.
+    func resolveCollisionOffMain(directoryURL: URL, desiredName: String, excluding sourceURL: URL? = nil) async -> URL {
+        await withCheckedContinuation { continuation in
+            Self.ioQueue.async {
+                continuation.resume(returning: resolveCollision(
+                    directoryURL: directoryURL, desiredName: desiredName, excluding: sourceURL
+                ))
+            }
+        }
+    }
+
     /// If `desiredName` already exists in `directory`, append " (1)", " (2)", etc.
     /// Pass the file being renamed as `excluding` so that a file already named per
     /// the pattern doesn't collide with itself and get pointlessly bumped to " (1)".
+    ///
+    /// Performs filesystem I/O (stat calls). Movie files often live on network
+    /// volumes where a stat can take seconds — never call this from a view
+    /// `body` or on the main actor.
     func resolveCollision(directoryURL: URL, desiredName: String, excluding sourceURL: URL? = nil) -> URL {
         let fm = FileManager.default
 
