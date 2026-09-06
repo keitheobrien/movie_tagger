@@ -123,6 +123,8 @@ struct ProgressResultView: View {
         }
 
         Task {
+            appState.isWritingFile = true
+            defer { appState.isWritingFile = false }
             do {
                 // Step 1: Write metadata in-place (edits moov atom only, sub-second)
                 try await writer.writeMetadata(

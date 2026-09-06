@@ -97,6 +97,9 @@ class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError = false
     @Published var errorIsAuthFailure = false
+    /// True while MetadataWriter is modifying the user's file — the app must
+    /// not be replaced or quit (auto-update) during that window.
+    @Published var isWritingFile = false
 
     // Settings
     @Published var apiKey = ""

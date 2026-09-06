@@ -5,7 +5,10 @@ import SwiftUI
 /// release.
 struct UpdatePromptView: View {
     @EnvironmentObject var updater: UpdateManager
+    @EnvironmentObject var appState: AppState
     let release: GitHubRelease
+
+    private var isWritingMetadata: Bool { appState.isWritingFile }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -104,15 +107,26 @@ struct UpdatePromptView: View {
             }
 
         default:
-            HStack {
-                Link("View on GitHub", destination: releasesURL)
-                    .font(.caption)
-                Spacer()
-                Button("Later") { dismissPrompt() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Update Now") { updater.performUpdate(release) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+            VStack(alignment: .leading, spacing: 8) {
+                if isWritingMetadata {
+                    Label("Finish the current metadata write before updating.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                HStack {
+                    Link("View on GitHub", destination: releasesURL)
+                        .font(.caption)
+                    Spacer()
+                    Button("Later") { dismissPrompt() }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Update Now") { updater.performUpdate(release) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        // Installing replaces and quits the app — never while
+                        // it's writing into the user's file.
+                        .disabled(isWritingMetadata)
+                }
             }
         }
     }

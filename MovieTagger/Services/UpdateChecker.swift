@@ -1,6 +1,33 @@
 import AppKit
 import Foundation
+import OSLog
 import Security
+
+/// Unified-log channel for the updater: `log show --predicate 'subsystem == "com.movietagger.app"'`.
+private let log = UpdaterLog()
+
+/// Thin wrapper: unified log always; in DEBUG builds also append to a plain
+/// trace file so the flow can be observed end-to-end from a shell.
+private struct UpdaterLog {
+    private let logger = Logger(subsystem: "com.movietagger.app", category: "updater")
+    #if DEBUG
+    private let traceURL = FileManager.default.temporaryDirectory.appendingPathComponent("movietagger-updater.log")
+    #endif
+
+    func notice(_ message: String) { logger.notice("\(message, privacy: .public)"); trace("NOTICE " + message) }
+    func error(_ message: String)  { logger.error("\(message, privacy: .public)");  trace("ERROR  " + message) }
+
+    private func trace(_ line: String) {
+        #if DEBUG
+        let stamped = "\(Date()) [\(ProcessInfo.processInfo.processIdentifier)] \(line)\n"
+        if let handle = try? FileHandle(forWritingTo: traceURL) {
+            handle.seekToEndOfFile(); handle.write(Data(stamped.utf8)); try? handle.close()
+        } else {
+            try? stamped.write(to: traceURL, atomically: true, encoding: .utf8)
+        }
+        #endif
+    }
+}
 
 // MARK: - GitHub release models
 
@@ -144,17 +171,54 @@ final class UpdateManager: ObservableObject {
     /// Launch-time check: silent unless a newer release is found.
     func checkAutomatically() async {
         guard UserDefaults.standard.object(forKey: Self.autoCheckKey) == nil
-                || UserDefaults.standard.bool(forKey: Self.autoCheckKey) else { return }
+                || UserDefaults.standard.bool(forKey: Self.autoCheckKey) else {
+            log.notice("auto-check disabled by preference")
+            return
+        }
         let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date ?? .distantPast
-        guard Date().timeIntervalSince(last) > Self.checkInterval else { return }
+        #if DEBUG
+        let forced = Self.debugFlag("MOVIETAGGER_FORCE_UPDATE")   // also skips the throttle
+        #else
+        let forced = false
+        #endif
+        guard forced || Date().timeIntervalSince(last) > Self.checkInterval else {
+            log.notice("auto-check skipped: last check \(last) is within the interval")
+            return
+        }
 
         menuInitiatedCheck = false
-        if let release = try? await fetchNewerRelease() {
-            availableRelease = release
-            showUpdatePrompt = true
+        do {
+            if let release = try await fetchNewerRelease() {
+                availableRelease = release
+                showUpdatePrompt = true
+                #if DEBUG
+                // End-to-end test hook: accept the update without a click.
+                if Self.debugFlag("MOVIETAGGER_AUTO_ACCEPT_UPDATE", oneShot: true) {
+                    log.notice("DEBUG auto-accept hook: starting update")
+                    performUpdate(release)
+                }
+                #endif
+            } else {
+                log.notice("auto-check: up to date (\(self.currentVersionString))")
+            }
+        } catch {
+            // Silent for the user on the automatic path — but not for the log.
+            log.error("auto-check failed: \(error.localizedDescription)")
         }
-        // Errors and "up to date" stay silent on the automatic path.
     }
+
+    #if DEBUG
+    /// Test hooks read the environment or, since `open` can't pass env vars,
+    /// a matching UserDefaults key (`defaults write com.movietagger.app <flag> -bool YES`).
+    /// `oneShot` clears the defaults key on read, so a forgotten flag can't keep
+    /// replacing Debug builds on every launch.
+    private static func debugFlag(_ name: String, oneShot: Bool = false) -> Bool {
+        if ProcessInfo.processInfo.environment[name] == "1" { return true }
+        guard UserDefaults.standard.bool(forKey: name) else { return false }
+        if oneShot { UserDefaults.standard.removeObject(forKey: name) }
+        return true
+    }
+    #endif
 
     /// User-initiated check: everything is surfaced.
     func checkInteractively(origin: CheckOrigin = .settings) async {
@@ -192,10 +256,11 @@ final class UpdateManager: ObservableObject {
         UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
 
         #if DEBUG
-        let force = ProcessInfo.processInfo.environment["MOVIETAGGER_FORCE_UPDATE"] == "1"
+        let force = Self.debugFlag("MOVIETAGGER_FORCE_UPDATE")
         #else
         let force = false
         #endif
+        log.notice("latest release \(release.tagName), running \(self.currentVersionString)\(force ? " (forced)" : "")")
         guard let remote = AppVersion(release.tagName),
               let current = AppVersion(currentVersionString) else { return force ? release : nil }
         return (remote > current || force) ? release : nil
@@ -203,8 +268,16 @@ final class UpdateManager: ObservableObject {
 
     // MARK: Update flow (download -> verify -> install -> relaunch)
 
+    /// Installed by the app: true while the app must not be replaced and quit
+    /// (a metadata write into the user's file is in flight).
+    var installGate: () -> Bool = { false }
+
     func performUpdate(_ release: GitHubRelease) {
         guard updateTask == nil else { return }
+        guard !installGate() else {
+            phase = .failed("Finish the current metadata write before updating.")
+            return
+        }
         updateTask = Task {
             await runUpdate(release)
             updateTask = nil
@@ -230,6 +303,7 @@ final class UpdateManager: ObservableObject {
         do {
             guard let asset = release.appAsset else { throw UpdateError.noAsset }
 
+            log.notice("update \(release.tagName): downloading \(asset.name)")
             phase = .downloading(0)
             try await Self.download(asset, to: zipURL) { progress in
                 Task { @MainActor [weak self] in
@@ -238,6 +312,7 @@ final class UpdateManager: ObservableObject {
                 }
             }
 
+            log.notice("download complete; extracting and verifying signature")
             phase = .installing
             let newApp = try await Task.detached(priority: .userInitiated) {
                 let app = try Self.extractApp(from: zipURL, into: extractDir)
@@ -246,16 +321,21 @@ final class UpdateManager: ObservableObject {
                 return app
             }.value
 
-            let installedURL = try Self.install(newApp: newApp)
+            log.notice("signature verified; installing")
+            let (installedURL, backup) = try Self.install(newApp: newApp)
             cleanupTemp()   // before relaunch — terminate may not return
-            relaunch(at: installedURL)
+            log.notice("installed at \(installedURL.path); relaunching")
+            relaunch(at: installedURL, removingBackup: backup)
         } catch is CancellationError {
+            log.notice("update cancelled")
             cleanupTemp()
             phase = .idle
         } catch let error as URLError where error.code == .cancelled {
+            log.notice("update cancelled")
             cleanupTemp()
             phase = .idle
         } catch {
+            log.error("update failed: \(error.localizedDescription)")
             cleanupTemp()
             phase = .failed(error.localizedDescription)
         }
@@ -362,7 +442,7 @@ final class UpdateManager: ObservableObject {
 
     /// Move the running app aside (allowed on macOS — the binary stays mapped)
     /// and move the verified new version into its place. Rolls back on failure.
-    private nonisolated static func install(newApp: URL) throws -> URL {
+    private nonisolated static func install(newApp: URL) throws -> (installed: URL, backup: URL) {
         let fm = FileManager.default
         let currentURL = Bundle.main.bundleURL
         let parent = currentURL.deletingLastPathComponent()
@@ -386,22 +466,53 @@ final class UpdateManager: ObservableObject {
             try? fm.moveItem(at: backup, to: currentURL)
             throw UpdateError.installFailed(error.localizedDescription)
         }
-        try? fm.removeItem(at: backup)
-        return currentURL
+        // The backup IS the running process's bundle — it must stay on disk
+        // until this process has exited (the relaunch helper removes it).
+        return (currentURL, backup)
     }
 
-    private func relaunch(at appURL: URL) {
+    private func relaunch(at appURL: URL, removingBackup backup: URL) {
         let pid = ProcessInfo.processInfo.processIdentifier
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // Wait for THIS process to fully exit (no fixed-sleep race), then launch
-        // the new copy. "$0" keeps the path out of shell interpretation.
+        // Wait for THIS process to fully exit (no fixed-sleep race), launch the
+        // new copy, and only then remove the old bundle we're still running
+        // from. "$0"/"$1" keep the paths out of shell interpretation.
+        // `open -n` forces a fresh instance even if LaunchServices still lists
+        // the dead pid for a moment (plain `open` would just "activate" it and
+        // nothing would relaunch); one retry covers that window. $1 is the
+        // whole staging directory the backup lives in — ours alone.
         sh.arguments = [
             "-c",
-            "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"",
+            "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; "
+                + "/usr/bin/open -n \"$0\" || { /bin/sleep 1; /usr/bin/open -n \"$0\"; }; "
+                + "/bin/rm -rf \"$1\"",
             appURL.path,
+            backup.deletingLastPathComponent().path,
         ]
-        try? sh.run()
-        NSApp.terminate(nil)
+        do {
+            try sh.run()
+        } catch {
+            // Don't quit into nothing: the new version is installed at the
+            // original path, the user just has to reopen it.
+            log.error("could not start relaunch helper: \(error.localizedDescription)")
+            phase = .failed("The update was installed, but MovieTagger couldn\u{2019}t relaunch itself. Quit and reopen it to finish.")
+            return
+        }
+
+        // NSApp.terminate(nil) is silently refused while a sheet is presented
+        // (reproduced: it returns and the app keeps running), so dismiss the
+        // update sheet first and terminate once that has committed. If AppKit
+        // still declines, exit outright — the install is complete and the
+        // helper above relaunches the new version the moment we're gone.
+        showUpdatePrompt = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            log.notice("terminating for relaunch")
+            NSApp.terminate(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                log.error("NSApp.terminate was refused; exiting directly")
+                exit(0)
+            }
+        }
     }
 }

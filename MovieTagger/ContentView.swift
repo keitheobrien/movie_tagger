@@ -26,6 +26,7 @@ struct ContentView: View {
             if let release = updater.availableRelease {
                 UpdatePromptView(release: release)
                     .environmentObject(updater)
+                    .environmentObject(appState)
             }
         }
         // Feedback for the menu-initiated check (Settings has its own status line).
@@ -40,6 +41,8 @@ struct ContentView: View {
             Text(checkFailureMessage)
         }
         .task {
+            // The updater must never replace and quit the app mid-write.
+            updater.installGate = { appState.isWritingFile }
             // Give launch a moment before phoning home.
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             await updater.checkAutomatically()
