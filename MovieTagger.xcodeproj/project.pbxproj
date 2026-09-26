@@ -10,6 +10,10 @@
 		16D6D0F66E04B62C497A039D /* TMDbClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7466D4D531AD72FED2283CAA /* TMDbClient.swift */; };
 		2FC748B44899016AFA9BE7D2 /* MetadataWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23404B25651E4B5C5027E93C /* MetadataWriter.swift */; };
 		3A877B56F5D0CAF91973FEB0 /* ProgressResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B575FF7CD52C6F79249969B0 /* ProgressResultView.swift */; };
+		5590EE46460E4A62600DA5A9 /* MetadataWriteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C69EDF966F52060140ECB3BB /* MetadataWriteCoordinator.swift */; };
+		5FF7A4E0E258E716F1D730E1 /* MetadataWriteCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AA92B60FCFC16FB83DD6B18 /* MetadataWriteCoordinatorTests.swift */; };
+		60C6BA3A30B501590FC2E96F /* MetadataWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36E8F5266932A6629B9833B3 /* MetadataWriterTests.swift */; };
+		622F4936E18927CB555559AE /* MetadataWriteOperationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C785F1B76FC26B511F2A690 /* MetadataWriteOperationTests.swift */; };
 		86C758A99CAA3C1890FDD684 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 38598954692B5C36E2AC22DB /* Assets.xcassets */; };
 		90895C95067D62AA35D2635E /* TMDbModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151092925D321D5C886FDA9C /* TMDbModels.swift */; };
 		96A49AADDEE6981D2CEEA6EF /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0C5A1E17C2E6E290E8228C /* KeychainHelper.swift */; };
@@ -19,29 +23,56 @@
 		9E45D362A7B32F32E7044558 /* FileSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60E4E00E490D9319E8690F6D /* FileSelectionView.swift */; };
 		A7A0B632B2C15DF0905257ED /* MovieTaggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273525CE5D3CCCB5BEAC5DC3 /* MovieTaggerApp.swift */; };
 		B434ADF07F0ABE3D71673F63 /* FilenameFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472C0F95D084EC8287E9C944 /* FilenameFormatter.swift */; };
+		B49A503DE43AA3DC81A797B4 /* RealVideoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61AD7BB147B14A08C2FB4009 /* RealVideoTests.swift */; };
 		C25A6A40325C2B15ED1D6B8B /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFCA5898C48E4E60A219195D /* UpdateChecker.swift */; };
 		C868B8B7F7245D0D9E5D3719 /* UpdatePromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFDEC4DFCEB0EBC60F2A3459 /* UpdatePromptView.swift */; };
+		D23218B4A4ECAEBDC4E8368F /* MP4Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A72EF47FAB68F52F1F792AA /* MP4Fixtures.swift */; };
+		D4015B87C3052B726720B9FD /* AtomicFileUpdateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6329A7236C959C47823844 /* AtomicFileUpdateTests.swift */; };
 		E812C2C4B9B934E504331BC6 /* MovieEditModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7940451B273702782B4F434B /* MovieEditModel.swift */; };
+		E9418001DBC84FEC8D6F44FA /* AtomicFileUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 244DE490625C1BA5981A523D /* AtomicFileUpdate.swift */; };
+		F891656201A148149403799F /* MovieMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = C32E44BB7E2267E8D85E679A /* MovieMetadata.swift */; };
+		FAAF63F4D7A524704EAC5FD4 /* CredentialMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C73A3F0830DCEFE9CB657707 /* CredentialMigrationTests.swift */; };
 		FAFD5F393BD0EE73A7AF41A4 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C6D19E2BCF4E347F2EC6A3F /* ContentView.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		2F4D030DD4CC99330E066C1E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DFE098B3E84EEDC7883E3ED6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0532C9A6CA5C0B557FF5B331;
+			remoteInfo = MovieTagger;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		03344FEEF795BB6E397DC8DC /* ReviewEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewEditView.swift; sourceTree = "<group>"; };
 		151092925D321D5C886FDA9C /* TMDbModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TMDbModels.swift; sourceTree = "<group>"; };
 		23404B25651E4B5C5027E93C /* MetadataWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataWriter.swift; sourceTree = "<group>"; };
+		244DE490625C1BA5981A523D /* AtomicFileUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicFileUpdate.swift; sourceTree = "<group>"; };
 		273525CE5D3CCCB5BEAC5DC3 /* MovieTaggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieTaggerApp.swift; sourceTree = "<group>"; };
+		36E8F5266932A6629B9833B3 /* MetadataWriterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataWriterTests.swift; sourceTree = "<group>"; };
 		38598954692B5C36E2AC22DB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3C6D19E2BCF4E347F2EC6A3F /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		3D6329A7236C959C47823844 /* AtomicFileUpdateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicFileUpdateTests.swift; sourceTree = "<group>"; };
 		472C0F95D084EC8287E9C944 /* FilenameFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilenameFormatter.swift; sourceTree = "<group>"; };
 		4B96F8BAE83F33567A73FB5F /* MovieTagger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MovieTagger.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		57474C4CCEE1CF1358535562 /* MovieSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieSearchView.swift; sourceTree = "<group>"; };
+		5AA92B60FCFC16FB83DD6B18 /* MetadataWriteCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataWriteCoordinatorTests.swift; sourceTree = "<group>"; };
 		60E4E00E490D9319E8690F6D /* FileSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSelectionView.swift; sourceTree = "<group>"; };
+		61AD7BB147B14A08C2FB4009 /* RealVideoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealVideoTests.swift; sourceTree = "<group>"; };
+		6A2FA6EFEC5AA42808FC1057 /* MovieTaggerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MovieTaggerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C86E7547CAFC39CDDF0B429 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		7466D4D531AD72FED2283CAA /* TMDbClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TMDbClient.swift; sourceTree = "<group>"; };
 		7940451B273702782B4F434B /* MovieEditModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieEditModel.swift; sourceTree = "<group>"; };
 		8B31F45201FCDF402A8D5F86 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		8C785F1B76FC26B511F2A690 /* MetadataWriteOperationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataWriteOperationTests.swift; sourceTree = "<group>"; };
 		8E1151C0791C7FD3C268D5AD /* MovieTagger.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MovieTagger.entitlements; sourceTree = "<group>"; };
+		9A72EF47FAB68F52F1F792AA /* MP4Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP4Fixtures.swift; sourceTree = "<group>"; };
 		B575FF7CD52C6F79249969B0 /* ProgressResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressResultView.swift; sourceTree = "<group>"; };
+		C32E44BB7E2267E8D85E679A /* MovieMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovieMetadata.swift; sourceTree = "<group>"; };
+		C69EDF966F52060140ECB3BB /* MetadataWriteCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataWriteCoordinator.swift; sourceTree = "<group>"; };
+		C73A3F0830DCEFE9CB657707 /* CredentialMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialMigrationTests.swift; sourceTree = "<group>"; };
 		DFCA5898C48E4E60A219195D /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		DFDEC4DFCEB0EBC60F2A3459 /* UpdatePromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdatePromptView.swift; sourceTree = "<group>"; };
 		FE0C5A1E17C2E6E290E8228C /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
@@ -52,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				4B96F8BAE83F33567A73FB5F /* MovieTagger.app */,
+				6A2FA6EFEC5AA42808FC1057 /* MovieTaggerTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -75,6 +107,7 @@
 			isa = PBXGroup;
 			children = (
 				34E06C78F25589DA6ACC7E5C /* MovieTagger */,
+				931E7F3B6EA79C28AE114B9C /* MovieTaggerTests */,
 				0DB813EF1B79031503C7B917 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -82,8 +115,10 @@
 		433A9EAEE4C29ED5574CC0F2 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				244DE490625C1BA5981A523D /* AtomicFileUpdate.swift */,
 				472C0F95D084EC8287E9C944 /* FilenameFormatter.swift */,
 				FE0C5A1E17C2E6E290E8228C /* KeychainHelper.swift */,
+				C69EDF966F52060140ECB3BB /* MetadataWriteCoordinator.swift */,
 				23404B25651E4B5C5027E93C /* MetadataWriter.swift */,
 				7466D4D531AD72FED2283CAA /* TMDbClient.swift */,
 				DFCA5898C48E4E60A219195D /* UpdateChecker.swift */,
@@ -91,10 +126,25 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
+		931E7F3B6EA79C28AE114B9C /* MovieTaggerTests */ = {
+			isa = PBXGroup;
+			children = (
+				3D6329A7236C959C47823844 /* AtomicFileUpdateTests.swift */,
+				C73A3F0830DCEFE9CB657707 /* CredentialMigrationTests.swift */,
+				5AA92B60FCFC16FB83DD6B18 /* MetadataWriteCoordinatorTests.swift */,
+				8C785F1B76FC26B511F2A690 /* MetadataWriteOperationTests.swift */,
+				36E8F5266932A6629B9833B3 /* MetadataWriterTests.swift */,
+				9A72EF47FAB68F52F1F792AA /* MP4Fixtures.swift */,
+				61AD7BB147B14A08C2FB4009 /* RealVideoTests.swift */,
+			);
+			path = MovieTaggerTests;
+			sourceTree = "<group>";
+		};
 		9A15F46B5D5A0DD1CE06E264 /* Models */ = {
 			isa = PBXGroup;
 			children = (
 				7940451B273702782B4F434B /* MovieEditModel.swift */,
+				C32E44BB7E2267E8D85E679A /* MovieMetadata.swift */,
 				151092925D321D5C886FDA9C /* TMDbModels.swift */,
 			);
 			path = Models;
@@ -134,6 +184,24 @@
 			productReference = 4B96F8BAE83F33567A73FB5F /* MovieTagger.app */;
 			productType = "com.apple.product-type.application";
 		};
+		83C188D7284C7ECD8436CB80 /* MovieTaggerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 91A1B5997A999E4FEA5CFEDE /* Build configuration list for PBXNativeTarget "MovieTaggerTests" */;
+			buildPhases = (
+				731931867FF3110E2D5BDB53 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D5479CE2CB5030496F1E7934 /* PBXTargetDependency */,
+			);
+			name = MovieTaggerTests;
+			packageProductDependencies = (
+			);
+			productName = MovieTaggerTests;
+			productReference = 6A2FA6EFEC5AA42808FC1057 /* MovieTaggerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -160,6 +228,7 @@
 			projectRoot = "";
 			targets = (
 				0532C9A6CA5C0B557FF5B331 /* MovieTagger */,
+				83C188D7284C7ECD8436CB80 /* MovieTaggerTests */,
 			);
 		};
 /* End PBXProject section */
@@ -176,16 +245,33 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		731931867FF3110E2D5BDB53 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D4015B87C3052B726720B9FD /* AtomicFileUpdateTests.swift in Sources */,
+				FAAF63F4D7A524704EAC5FD4 /* CredentialMigrationTests.swift in Sources */,
+				D23218B4A4ECAEBDC4E8368F /* MP4Fixtures.swift in Sources */,
+				5FF7A4E0E258E716F1D730E1 /* MetadataWriteCoordinatorTests.swift in Sources */,
+				622F4936E18927CB555559AE /* MetadataWriteOperationTests.swift in Sources */,
+				60C6BA3A30B501590FC2E96F /* MetadataWriterTests.swift in Sources */,
+				B49A503DE43AA3DC81A797B4 /* RealVideoTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B43923220CF5E09D1572784B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E9418001DBC84FEC8D6F44FA /* AtomicFileUpdate.swift in Sources */,
 				FAFD5F393BD0EE73A7AF41A4 /* ContentView.swift in Sources */,
 				9E45D362A7B32F32E7044558 /* FileSelectionView.swift in Sources */,
 				B434ADF07F0ABE3D71673F63 /* FilenameFormatter.swift in Sources */,
 				96A49AADDEE6981D2CEEA6EF /* KeychainHelper.swift in Sources */,
+				5590EE46460E4A62600DA5A9 /* MetadataWriteCoordinator.swift in Sources */,
 				2FC748B44899016AFA9BE7D2 /* MetadataWriter.swift in Sources */,
 				E812C2C4B9B934E504331BC6 /* MovieEditModel.swift in Sources */,
+				F891656201A148149403799F /* MovieMetadata.swift in Sources */,
 				9A6820349E657A48B4150126 /* MovieSearchView.swift in Sources */,
 				A7A0B632B2C15DF0905257ED /* MovieTaggerApp.swift in Sources */,
 				3A877B56F5D0CAF91973FEB0 /* ProgressResultView.swift in Sources */,
@@ -200,7 +286,33 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		D5479CE2CB5030496F1E7934 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0532C9A6CA5C0B557FF5B331 /* MovieTagger */;
+			targetProxy = 2F4D030DD4CC99330E066C1E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		05103E809C8CF2C4CE7049A4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.movietagger.MovieTaggerTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MovieTagger.app/Contents/MacOS/MovieTagger";
+			};
+			name = Release;
+		};
 		460553B96D3A2AC175E9B143 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -264,7 +376,7 @@
 				CODE_SIGN_ENTITLEMENTS = MovieTagger/MovieTagger.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MovieTagger/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -272,7 +384,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 1.4;
+				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.movietagger.app;
 				PRODUCT_NAME = MovieTagger;
 				SDKROOT = macosx;
@@ -352,7 +464,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 9R236BB67S;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -362,7 +474,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 1.4;
+				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.movietagger.app;
 				PRODUCT_NAME = MovieTagger;
 				SDKROOT = macosx;
@@ -370,6 +482,24 @@
 				SWIFT_VERSION = 5.9;
 			};
 			name = Release;
+		};
+		ED8CDCF0E14A1B5AA56A6443 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.movietagger.MovieTaggerTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MovieTagger.app/Contents/MacOS/MovieTagger";
+			};
+			name = Debug;
 		};
 /* End XCBuildConfiguration section */
 
@@ -388,6 +518,15 @@
 			buildConfigurations = (
 				9D6C59C8B1475D84CDE7CBC1 /* Debug */,
 				460553B96D3A2AC175E9B143 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		91A1B5997A999E4FEA5CFEDE /* Build configuration list for PBXNativeTarget "MovieTaggerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ED8CDCF0E14A1B5AA56A6443 /* Debug */,
+				05103E809C8CF2C4CE7049A4 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

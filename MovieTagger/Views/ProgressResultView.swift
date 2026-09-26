@@ -2,27 +2,24 @@ import SwiftUI
 
 struct ProgressResultView: View {
     @EnvironmentObject var appState: AppState
-    @State private var progress: Float = 0
-    @State private var isComplete = false
-    @State private var outputURL: URL?
-    @State private var errorMessage: String?
-
-    private let writer = MetadataWriter()
-    private let formatter = FilenameFormatter()
+    @ObservedObject var coordinator: MetadataWriteCoordinator
+    private var progress: Float { coordinator.progress }
 
     var body: some View {
         VStack(spacing: 24) {
-            if let err = errorMessage {
+            if let err = coordinator.errorMessage {
                 errorView(err)
-            } else if isComplete, let url = outputURL {
-                successView(url)
+            } else if let result = coordinator.result {
+                successView(result.url)
+                if let warning = result.renameWarning {
+                    Text(warning).foregroundColor(.orange)
+                }
             } else {
                 progressView
             }
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { startWriting() }
     }
 
     // MARK: - Progress
@@ -100,9 +97,7 @@ struct ProgressResultView: View {
 
             HStack(spacing: 16) {
                 Button("Try Again") {
-                    errorMessage = nil
-                    progress = 0
-                    startWriting()
+                    appState.startWriting()
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -113,65 +108,4 @@ struct ProgressResultView: View {
         }
     }
 
-    // MARK: - Write logic (in-place, no temp file, no remux, no copy)
-
-    private func startWriting() {
-        guard let inputURL = appState.selectedFileURL,
-              let model = appState.movieEditModel else {
-            errorMessage = "Missing file or movie data."
-            return
-        }
-
-        Task {
-            appState.isWritingFile = true
-            defer { appState.isWritingFile = false }
-            do {
-                // Step 1: Write metadata in-place (edits moov atom only, sub-second)
-                try await writer.writeMetadata(
-                    fileURL: inputURL,
-                    model: model,
-                    progressHandler: { @MainActor p in self.progress = p }
-                )
-
-                // Step 2: Rename if requested (instant move, no data copied).
-                // formatIfValid returns nil for an empty/invalid pattern — skip the
-                // rename rather than produce an invisible ".mp4" dotfile.
-                var finalURL = inputURL
-                if model.renameFile,
-                   let desiredName = formatter.formatIfValid(pattern: model.namingPattern, model: model) {
-                    let directory = inputURL.deletingLastPathComponent()
-                    let targetURL = formatter.resolveCollision(
-                        directoryURL: directory, desiredName: desiredName, excluding: inputURL
-                    )
-
-                    if targetURL.standardizedFileURL.path != inputURL.standardizedFileURL.path {
-                        do {
-                            try FileManager.default.moveItem(at: inputURL, to: targetURL)
-                            finalURL = targetURL
-                        } catch {
-                            // Metadata was already written successfully — report the
-                            // rename failure as exactly that, not as a write failure.
-                            await MainActor.run {
-                                outputURL = inputURL
-                                isComplete = true
-                                appState.showError(
-                                    "Metadata was written, but the file could not be renamed: \(error.localizedDescription)"
-                                )
-                            }
-                            return
-                        }
-                    }
-                }
-
-                await MainActor.run {
-                    outputURL = finalURL
-                    isComplete = true
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                }
-            }
-        }
-    }
 }

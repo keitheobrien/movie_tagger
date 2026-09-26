@@ -1,12 +1,17 @@
 import Foundation
 
-struct FilenameFormatter {
+struct FilenameFormatter: Sendable {
 
     /// Apply the naming pattern with token substitution, sanitize, and add .mp4 extension.
     /// Returns nil when the pattern yields an empty filename (blank pattern, or a
     /// pattern whose tokens all substitute to nothing) — callers must skip renaming
     /// rather than produce an invisible ".mp4" dotfile.
+    @MainActor
     func formatIfValid(pattern: String, model: MovieEditModel) -> String? {
+        formatIfValid(pattern: pattern, model: MovieMetadata(from: model))
+    }
+
+    func formatIfValid(pattern: String, model: MovieMetadata) -> String? {
         var result = pattern
         result = result.replacingOccurrences(of: "{title}",   with: model.title)
         result = result.replacingOccurrences(of: "{year}",    with: model.year)

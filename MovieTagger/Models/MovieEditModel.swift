@@ -3,7 +3,7 @@ import AppKit
 
 // MARK: - Video Resolution
 
-enum VideoResolution: String, CaseIterable, Identifiable {
+enum VideoResolution: String, CaseIterable, Identifiable, Sendable {
     case sd480   = "SD 480P"
     case hd720   = "HD 720P"
     case hd1080  = "HD 1080P"
@@ -31,6 +31,7 @@ enum VideoResolution: String, CaseIterable, Identifiable {
 }
 
 /// User-editable model bridging TMDb data and the metadata writer.
+@MainActor
 class MovieEditModel: ObservableObject {
     // Core fields
     @Published var title: String

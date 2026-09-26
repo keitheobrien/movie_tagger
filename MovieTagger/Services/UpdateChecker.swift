@@ -151,7 +151,7 @@ final class UpdateManager: ObservableObject {
     private var updateTask: Task<Void, Never>?
 
     static let repo = "keitheobrien/movie_tagger"
-    static let teamID = "9R236BB67S"
+    nonisolated static let teamID = "9R236BB67S"
     private static let lastCheckKey = "last_update_check"
     static let autoCheckKey = "auto_update_check"
     private static let checkInterval: TimeInterval = 20 * 60 * 60   // ~daily
@@ -278,6 +278,7 @@ final class UpdateManager: ObservableObject {
             phase = .failed("Finish the current metadata write before updating.")
             return
         }
+        phase = .downloading(0)
         updateTask = Task {
             await runUpdate(release)
             updateTask = nil
@@ -305,7 +306,7 @@ final class UpdateManager: ObservableObject {
 
             log.notice("update \(release.tagName): downloading \(asset.name)")
             phase = .downloading(0)
-            try await Self.download(asset, to: zipURL) { progress in
+            try await Self.download(asset, to: zipURL) { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self, case .downloading = self.phase else { return }
                     self.phase = .downloading(progress)
@@ -321,6 +322,10 @@ final class UpdateManager: ObservableObject {
                 return app
             }.value
 
+            guard !installGate() else {
+                throw UpdateError.installFailed("Finish the current metadata write before updating.")
+            }
+            try Task.checkCancellation()
             log.notice("signature verified; installing")
             let (installedURL, backup) = try Self.install(newApp: newApp)
             cleanupTemp()   // before relaunch — terminate may not return

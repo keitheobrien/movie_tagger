@@ -1,227 +1,230 @@
 import Foundation
 
-/// Writes MP4 metadata by directly manipulating atoms in-place.
-/// No remuxing, no re-encoding, no file copy.  Only the moov atom is touched.
-final class MetadataWriter {
-
+/// Rebuilds movie metadata on a disposable copy and commits atomically.
+/// Audio/video bytes and chunk offsets are preserved without re-encoding.
+final class MetadataWriter: Sendable {
     enum WriterError: LocalizedError {
         case cannotReadFile
         case invalidMP4
+        case unsupported(String)
         case writeFailed(String)
 
         var errorDescription: String? {
             switch self {
-            case .cannotReadFile:    return "Cannot read the input file."
-            case .invalidMP4:        return "Not a valid MP4 file (moov atom not found)."
-            case .writeFailed(let m): return "Metadata write failed: \(m)"
+            case .cannotReadFile: return "Cannot read the input file."
+            case .invalidMP4: return "The MP4 contains missing, malformed, or truncated atoms. The original file was not changed."
+            case .unsupported(let reason): return "This MP4 layout is not supported: \(reason) The original file was not changed."
+            case .writeFailed(let message): return "Metadata write failed: \(message)"
             }
         }
     }
 
-    // MARK: - Public API
+    private static let ioQueue = DispatchQueue(label: "com.movietagger.metadata-io", qos: .userInitiated)
 
-    /// Write metadata directly into the MP4 file (in-place, no remux).
     func writeMetadata(
         fileURL: URL,
-        model: MovieEditModel,
-        progressHandler: @escaping @MainActor @Sendable (Float) -> Void
+        metadata: MovieMetadata,
+        progressHandler: @escaping @Sendable (Float) -> Void
     ) async throws {
-        await MainActor.run { progressHandler(0.05) }
-
-        let handle = try FileHandle(forUpdating: fileURL)
-        defer { try? handle.close() }
-
-        let fileSize = Int(handle.seekToEndOfFile())
-
-        // 1. Scan top-level boxes to locate moov
-        let topBoxes = try scanTopLevelBoxes(handle: handle, fileSize: fileSize)
-
-        guard let moovBox = topBoxes.first(where: { $0.type == "moov" }) else {
-            throw WriterError.invalidMP4
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.ioQueue.async {
+                do {
+                    progressHandler(0.05)
+                    try AtomicFileUpdate.perform(at: fileURL) { staged in
+                        try self.writeStagedFile(staged, metadata: metadata, progress: progressHandler)
+                    }
+                    progressHandler(1)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
+    }
 
-        await MainActor.run { progressHandler(0.15) }
-
-        // 2. Read moov data (typically < 1 MB, even for big files)
-        handle.seek(toFileOffset: UInt64(moovBox.offset))
-        guard let moovData = try handle.read(upToCount: moovBox.size),
-              moovData.count == moovBox.size else {
+    private func writeStagedFile(_ url: URL, metadata: MovieMetadata, progress: (Float) -> Void) throws {
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        guard let fileSize = Int(exactly: try handle.seekToEnd()) else { throw WriterError.invalidMP4 }
+        let boxes = try scanTopLevelBoxes(handle: handle, fileSize: fileSize)
+        let moovs = boxes.filter { $0.type == "moov" }
+        guard moovs.count == 1, let moov = moovs.first,
+              boxes.contains(where: { $0.type == "mdat" }) else { throw WriterError.invalidMP4 }
+        guard !boxes.contains(where: { ["moof", "sidx", "mfra"].contains($0.type) }) else {
+            throw WriterError.unsupported("fragmented movies")
+        }
+        // Bound allocation from untrusted input before reading any payload.
+        guard moov.size <= 256 * 1024 * 1024 else {
+            throw WriterError.unsupported("movie index larger than 256 MB")
+        }
+        try handle.seek(toOffset: UInt64(moov.offset))
+        guard let original = try handle.read(upToCount: moov.size), original.count == moov.size else {
             throw WriterError.cannotReadFile
         }
+        progress(0.35)
+        let newMoov = try rebuildMoov(original: original, newIlst: buildIlstAtom(from: metadata))
+        progress(0.6)
 
-        await MainActor.run { progressHandler(0.30) }
-
-        // 3. Build new ilst atom from the edit model
-        let newIlst = buildIlstAtom(from: model)
-
-        // 4. Splice the new ilst into the moov data
-        let newMoov = rebuildMoov(original: moovData, newIlst: newIlst)
-
-        await MainActor.run { progressHandler(0.60) }
-
-        // 5. Write back to the file (in-place, no mdat copy)
-        let moovEnd = moovBox.offset + moovBox.size
-        let isLast  = (moovEnd >= fileSize)
-
-        if isLast {
-            // moov is at end of file → truncate & rewrite (instant)
-            try handle.truncate(atOffset: UInt64(moovBox.offset))
-            handle.seek(toFileOffset: UInt64(moovBox.offset))
+        if moov.offset + moov.size == fileSize {
+            // Truncation is safe here: this is only the staged copy.
+            try handle.truncate(atOffset: UInt64(moov.offset))
+            try handle.seek(toOffset: UInt64(moov.offset))
             try handle.write(contentsOf: newMoov)
         } else {
-            // moov is before mdat → append new moov at EOF, blank old moov with free box
-            // Step A: append new moov (old moov still valid if we crash here)
-            handle.seekToEndOfFile()
+            // A terminal size=0 box must stop at the OLD EOF, otherwise it
+            // would swallow the appended moov. Keep the payload at its offset.
+            if let last = boxes.last, last.extendsToEOF {
+                guard let finiteSize = UInt32(exactly: last.size) else {
+                    throw WriterError.unsupported("an open-ended atom larger than 4 GB")
+                }
+                try handle.seek(toOffset: UInt64(last.offset))
+                var sizeData = Data()
+                sizeData.append(bigEndian: finiteSize)
+                try handle.write(contentsOf: sizeData)
+            }
+            try handle.seek(toOffset: UInt64(fileSize))
             try handle.write(contentsOf: newMoov)
-            // Step B: overwrite old moov space with a free box
-            handle.seek(toFileOffset: UInt64(moovBox.offset))
-            try handle.write(contentsOf: makeFreeBox(size: moovBox.size))
+            try handle.seek(toOffset: UInt64(moov.offset))
+            try handle.write(contentsOf: makeFreeBox(size: moov.size))
         }
-
+        // Verify that exactly one complete moov remains discoverable before commit.
+        let end = Int(try handle.seekToEnd())
+        let result = try scanTopLevelBoxes(handle: handle, fileSize: end)
+        guard result.filter({ $0.type == "moov" }).count == 1 else { throw WriterError.invalidMP4 }
         try handle.synchronize()
-        await MainActor.run { progressHandler(1.0) }
+        progress(0.9)
     }
 
-    // ───────────────────────────────────────────────────────────────────
-    // MARK: - Top-level box scanning (reads only headers, not payloads)
-    // ───────────────────────────────────────────────────────────────────
-
-    private struct FileBox {
-        let type: String
+    private struct Box {
+        let typeBytes: Data
         let offset: Int
         let size: Int
+        let headerSize: Int
+        let extendsToEOF: Bool
+        var type: String { String(data: typeBytes, encoding: .ascii) ?? "????" }
     }
 
-    private func scanTopLevelBoxes(handle: FileHandle, fileSize: Int) throws -> [FileBox] {
-        var boxes: [FileBox] = []
+    /// The same checked header parser is used for file and in-memory boxes.
+    private func parseHeader(_ data: Data, offset: Int, available: Int) throws -> Box {
+        guard available >= 8, data.count >= 8 else { throw WriterError.invalidMP4 }
+        let size32 = readU32(data, 0)
+        let headerSize = size32 == 1 ? 16 : 8
+        guard available >= headerSize, data.count >= headerSize else { throw WriterError.invalidMP4 }
+        let size: Int
+        if size32 == 1 {
+            guard let value = Int(exactly: readU64(data, 8)) else { throw WriterError.invalidMP4 }
+            size = value
+        } else {
+            size = size32 == 0 ? available : Int(size32)
+        }
+        guard size >= headerSize, size <= available else { throw WriterError.invalidMP4 }
+        return Box(typeBytes: childData(data, offset: 4, size: 4), offset: offset,
+                   size: size, headerSize: headerSize, extendsToEOF: size32 == 0)
+    }
+
+    private func scanTopLevelBoxes(handle: FileHandle, fileSize: Int) throws -> [Box] {
+        var boxes: [Box] = []
         var pos = 0
-
-        while pos + 8 <= fileSize {
-            handle.seek(toFileOffset: UInt64(pos))
-            guard let hdr = try handle.read(upToCount: 8), hdr.count == 8 else { break }
-
-            let hdrBytes = [UInt8](hdr)
-            var size = Int(UInt32(hdrBytes[0]) << 24 | UInt32(hdrBytes[1]) << 16
-                        | UInt32(hdrBytes[2]) << 8  | UInt32(hdrBytes[3]))
-            let type = String(bytes: hdrBytes[4..<8], encoding: .ascii) ?? "????"
-
-            if size == 1 {                                      // 64-bit extended size
-                guard let ext = try handle.read(upToCount: 8), ext.count == 8 else { break }
-                let extData = Data(ext)               // ensure contiguous
-                size = Int(readU64(extData, 0))
-            } else if size == 0 {                               // box runs to EOF
-                size = fileSize - pos
+        while pos < fileSize {
+            try handle.seek(toOffset: UInt64(pos))
+            guard let data = try handle.read(upToCount: min(16, fileSize - pos)) else {
+                throw WriterError.cannotReadFile
             }
-            guard size >= 8 else { break }
-
-            boxes.append(FileBox(type: type, offset: pos, size: size))
-            pos += size
+            let box = try parseHeader(data, offset: pos, available: fileSize - pos)
+            boxes.append(box)
+            pos += box.size
         }
         return boxes
     }
 
-    // ───────────────────────────────────────────────────────────────────
-    // MARK: - Moov / udta / meta / ilst rebuild
-    //
-    // Strategy: walk the container hierarchy, copy every child box as-is
-    // EXCEPT the ilst which is replaced with the freshly built one.
-    // Parent sizes are recalculated automatically by wrapBox().
-    // ───────────────────────────────────────────────────────────────────
-
-    private struct ChildBox {
-        let type: String
-        let offset: Int        // relative to parent data start
-        let size: Int
+    private func headerSize(of data: Data) throws -> Int {
+        try parseHeader(data, offset: 0, available: data.count).headerSize
     }
 
-    /// Parse the child boxes inside a container, starting after `headerSize` bytes.
-    private func parseChildren(of data: Data, headerSize: Int) -> [ChildBox] {
-        var children: [ChildBox] = []
-        let base = data.startIndex
-        let total = data.count
+    private func parseChildren(of data: Data, headerSize: Int) throws -> [Box] {
+        guard headerSize <= data.count else { throw WriterError.invalidMP4 }
+        var boxes: [Box] = []
         var pos = headerSize
-
-        while pos + 8 <= total {
-            let size = Int(readU32(data, pos))
-            let typeStart = base + pos + 4
-            let type = String(bytes: data[typeStart ..< typeStart + 4], encoding: .ascii) ?? "????"
-
-            let actualSize: Int
-            if size == 1, pos + 16 <= total {
-                actualSize = Int(readU64(data, pos + 8))
-            } else if size == 0 {
-                actualSize = total - pos
-            } else {
-                actualSize = size
-            }
-            guard actualSize >= 8, pos + actualSize <= total else { break }
-
-            children.append(ChildBox(type: type, offset: pos, size: actualSize))
-            pos += actualSize
+        while pos < data.count {
+            let remaining = data.count - pos
+            let header = childData(data, offset: pos, size: min(16, remaining))
+            let box = try parseHeader(header, offset: pos, available: remaining)
+            boxes.append(box)
+            pos += box.size
         }
-        return children
+        return boxes
     }
 
-    /// Extract a child box's bytes from a parent Data using relative offsets.
     private func childData(_ parent: Data, offset: Int, size: Int) -> Data {
         let base = parent.startIndex
-        return Data(parent[(base + offset) ..< (base + offset + size)])
+        return Data(parent[(base + offset)..<(base + offset + size)])
     }
 
-    private func rebuildMoov(original moov: Data, newIlst: Data) -> Data {
-        let children = parseChildren(of: moov, headerSize: 8)
+    private func preservedChild(_ parent: Data, _ box: Box) -> Data {
+        var data = childData(parent, offset: box.offset, size: box.size)
+        // Appending new siblings must not extend a formerly terminal child.
+        if box.extendsToEOF {
+            var size = UInt32(box.size).bigEndian
+            withUnsafeBytes(of: &size) { data.replaceSubrange(0..<4, with: $0) }
+        }
+        return data
+    }
+
+    private func rebuildMoov(original moov: Data, newIlst: Data) throws -> Data {
+        let children = try parseChildren(of: moov, headerSize: headerSize(of: moov))
+        guard !children.contains(where: { $0.type == "mvex" }) else {
+            throw WriterError.unsupported("fragmented movies")
+        }
         var body = Data()
         var wroteUdta = false
-
         for child in children {
             if child.type == "udta" {
                 wroteUdta = true
-                let udta = childData(moov, offset: child.offset, size: child.size)
-                body.append(rebuildUdta(original: udta, newIlst: newIlst))
+                body.append(try rebuildUdta(original: preservedChild(moov, child), newIlst: newIlst))
             } else {
-                body.append(childData(moov, offset: child.offset, size: child.size))
+                body.append(preservedChild(moov, child))
             }
         }
         if !wroteUdta { body.append(buildFullUdta(ilst: newIlst)) }
         return wrapBox(type: "moov", body: body)
     }
 
-    private func rebuildUdta(original udta: Data, newIlst: Data) -> Data {
-        let children = parseChildren(of: udta, headerSize: 8)
+    private func rebuildUdta(original udta: Data, newIlst: Data) throws -> Data {
+        let children = try parseChildren(of: udta, headerSize: headerSize(of: udta))
         var body = Data()
         var wroteMeta = false
-
         for child in children {
             if child.type == "meta" {
                 wroteMeta = true
-                let meta = childData(udta, offset: child.offset, size: child.size)
-                body.append(rebuildMeta(original: meta, newIlst: newIlst))
+                body.append(try rebuildMeta(original: preservedChild(udta, child), newIlst: newIlst))
             } else {
-                body.append(childData(udta, offset: child.offset, size: child.size))
+                body.append(preservedChild(udta, child))
             }
         }
         if !wroteMeta { body.append(buildFullMeta(ilst: newIlst)) }
         return wrapBox(type: "udta", body: body)
     }
 
-    private func rebuildMeta(original meta: Data, newIlst: Data) -> Data {
-        // meta box has 4 extra bytes (version + flags) after the standard 8-byte header
-        let metaHeaderSize = 12
-        let base = meta.startIndex
-        let versionFlags = Data(meta[(base + 8) ..< (base + 12)])
-
-        let children = parseChildren(of: meta, headerSize: metaHeaderSize)
-        var body = versionFlags
+    private func rebuildMeta(original meta: Data, newIlst: Data) throws -> Data {
+        let header = try headerSize(of: meta)
+        let children = try parseChildren(of: meta, headerSize: header + 4)
+        var body = childData(meta, offset: header, size: 4)
         var wroteIlst = false
         var hasHdlr = false
-
         for child in children {
             if child.type == "ilst" {
                 wroteIlst = true
-                body.append(newIlst)
+                body.append(try mergeIlst(original: preservedChild(meta, child), newIlst: newIlst))
             } else {
-                body.append(childData(meta, offset: child.offset, size: child.size))
-                if child.type == "hdlr" { hasHdlr = true }
+                if child.type == "hdlr" {
+                    let handler = preservedChild(meta, child)
+                    guard handler.count >= child.headerSize + 12,
+                          childData(handler, offset: child.headerSize + 8, size: 4) == ascii4("mdir") else {
+                        throw WriterError.unsupported("a non-iTunes metadata handler")
+                    }
+                    hasHdlr = true
+                }
+                body.append(preservedChild(meta, child))
             }
         }
         if !hasHdlr { body.append(buildMdirHdlr()) }
@@ -229,9 +232,37 @@ final class MetadataWriter {
         return wrapBox(type: "meta", body: body)
     }
 
-    // ───────────────────────────────────────────────────────────────────
-    // MARK: - Build new atoms from scratch (when udta/meta don't exist)
-    // ───────────────────────────────────────────────────────────────────
+    /// Replace only fields owned by MovieTagger; retain all unrelated atoms,
+    /// including freeforms distinguished by BOTH their namespace and name.
+    private func mergeIlst(original: Data, newIlst: Data) throws -> Data {
+        let replacements = try parseChildren(of: newIlst, headerSize: headerSize(of: newIlst))
+        var managed = Set(["desc", "ldes", "stik", "hdvd", "gnre"].map(ascii4))
+        for suffix in ["nam", "day", "gen", "cmt"] {
+            managed.insert(Data([0xA9]) + Data(suffix.utf8))
+        }
+        // A still-loading/missing poster must not erase existing artwork.
+        if replacements.contains(where: { $0.type == "covr" }) { managed.insert(ascii4("covr")) }
+        var body = Data()
+        for child in try parseChildren(of: original, headerSize: headerSize(of: original)) {
+            let data = preservedChild(original, child)
+            if managed.contains(child.typeBytes) { continue }
+            if child.type == "----" {
+                var values: [String: String] = [:]
+                for field in try parseChildren(of: data, headerSize: headerSize(of: data)) {
+                    if field.type == "mean" || field.type == "name" {
+                        guard field.size >= field.headerSize + 4 else { throw WriterError.invalidMP4 }
+                        values[field.type] = String(data: childData(data, offset: field.offset + field.headerSize + 4,
+                            size: field.size - field.headerSize - 4), encoding: .utf8)
+                    }
+                }
+                if values["mean"] == "com.apple.iTunes", ["iTunEXTC", "iTunMOVI"].contains(values["name"] ?? "") { continue }
+                if values["mean"] == "com.movietagger", values["name"] == "tmdb_json" { continue }
+            }
+            body.append(data)
+        }
+        body.append(newIlst.dropFirst(try headerSize(of: newIlst)))
+        return wrapBox(type: "ilst", body: body)
+    }
 
     private func buildFullUdta(ilst: Data) -> Data {
         return wrapBox(type: "udta", body: buildFullMeta(ilst: ilst))
@@ -259,7 +290,7 @@ final class MetadataWriter {
     // MARK: - Build ilst atom from MovieEditModel
     // ───────────────────────────────────────────────────────────────────
 
-    private func buildIlstAtom(from model: MovieEditModel) -> Data {
+    private func buildIlstAtom(from model: MovieMetadata) -> Data {
         var body = Data()
 
         // Title – ©nam  (0xA9 6E 61 6D)
@@ -268,14 +299,14 @@ final class MetadataWriter {
         }
 
         // Date / Year – ©day  (0xA9 64 61 79)
-        let dateVal = model.releaseDate.isEmpty ? model.year : model.releaseDate
+        let dateVal = model.releaseDate
         if !dateVal.isEmpty {
             body.append(makeTextItem(type: Data([0xA9, 0x64, 0x61, 0x79]), text: dateVal))
         }
 
         // Short description – desc
         if !model.overview.isEmpty {
-            body.append(makeTextItem(type: ascii4("desc"), text: model.overview))
+            body.append(makeTextItem(type: ascii4("desc"), text: String(model.overview.prefix(255))))
         }
 
         // Long description – ldes
@@ -404,7 +435,7 @@ final class MetadataWriter {
     // MARK: - Custom JSON payload
     // ───────────────────────────────────────────────────────────────────
 
-    private func buildCustomPayload(from model: MovieEditModel) -> Data? {
+    private func buildCustomPayload(from model: MovieMetadata) -> Data? {
         var dict: [String: Any] = [
             "title":             model.title,
             "year":              model.year,
@@ -434,7 +465,7 @@ final class MetadataWriter {
 
     /// Build an XML plist for the iTunMOVI atom containing cast, directors,
     /// screenwriters, producers, and studio in Apple's expected format.
-    private func buildITunMOVIPlist(from model: MovieEditModel) -> Data? {
+    private func buildITunMOVIPlist(from model: MovieMetadata) -> Data? {
         var dict: [String: Any] = [:]
 
         if !model.cast.isEmpty {

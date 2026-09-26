@@ -6,7 +6,7 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if appState.apiKey.isEmpty {
+            if appState.apiKey.isEmpty && appState.currentScreen != .progress {
                 apiKeyPromptView
             } else {
                 mainContent
@@ -43,6 +43,8 @@ struct ContentView: View {
         .task {
             // The updater must never replace and quit the app mid-write.
             updater.installGate = { appState.isWritingFile }
+            appState.updateIsBusy = { updater.isBusy }
+            guard ProcessInfo.processInfo.environment["MOVIETAGGER_TESTING"] != "1" else { return }
             // Give launch a moment before phoning home.
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             await updater.checkAutomatically()
@@ -86,7 +88,7 @@ struct ContentView: View {
         case .reviewEdit:
             ReviewEditView()
         case .progress:
-            ProgressResultView()
+            ProgressResultView(coordinator: appState.writeCoordinator)
         }
     }
 

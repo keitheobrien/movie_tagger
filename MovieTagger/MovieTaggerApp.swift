@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AVFoundation
 import UniformTypeIdentifiers
 
@@ -52,6 +53,7 @@ private struct OpenFileCommand: View {
             }
         }
         .keyboardShortcut("o")
+        .disabled(appState.isWritingFile)
     }
 }
 
@@ -73,6 +75,7 @@ private struct CheckForUpdatesCommand: View {
 
 // MARK: - App State
 
+@MainActor
 class AppState: ObservableObject {
     enum Screen {
         case fileSelection
@@ -99,7 +102,10 @@ class AppState: ObservableObject {
     @Published var errorIsAuthFailure = false
     /// True while MetadataWriter is modifying the user's file — the app must
     /// not be replaced or quit (auto-update) during that window.
-    @Published var isWritingFile = false
+    let writeCoordinator: MetadataWriteCoordinator
+    var isWritingFile: Bool { writeCoordinator.isWriting }
+    var updateIsBusy: () -> Bool = { false }
+    private var writeObservation: AnyCancellable?
 
     // Settings
     @Published var apiKey = ""
@@ -108,12 +114,28 @@ class AppState: ObservableObject {
 
     var tmdbClient: TMDbClient?
 
-    init() {
-        loadSettings()
+    init(loadSavedSettings: Bool = true, coordinator: MetadataWriteCoordinator? = nil) {
+        writeCoordinator = coordinator ?? MetadataWriteCoordinator()
+        writeObservation = writeCoordinator.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        if loadSavedSettings && ProcessInfo.processInfo.environment["MOVIETAGGER_TESTING"] != "1" { loadSettings() }
+    }
+
+    func startWriting() {
+        guard !isWritingFile, !updateIsBusy(),
+              let url = selectedFileURL, let model = movieEditModel else { return }
+        let snapshot = MovieMetadata(from: model)
+        if writeCoordinator.start(fileURL: url, metadata: snapshot, completion: { [weak self] result in
+            self?.selectedFileURL = result.url
+        }) {
+            currentScreen = .progress
+        }
     }
 
     func loadSettings() {
-        apiKey = KeychainHelper.load() ?? ""
+        do { apiKey = try KeychainHelper.load() ?? "" }
+        catch { showError("Could not load the saved API key: \(error.localizedDescription)") }
         language = UserDefaults.standard.string(forKey: "tmdb_language") ?? "en-US"
         defaultNamingPattern = UserDefaults.standard.string(forKey: "naming_pattern") ?? "{title} ({year})"
 
@@ -128,10 +150,17 @@ class AppState: ObservableObject {
         tmdbClient = TMDbClient(apiKey: key)
     }
 
-    func removeApiKey() {
-        KeychainHelper.delete()
-        apiKey = ""
-        tmdbClient = nil
+    @discardableResult
+    func removeApiKey() -> Bool {
+        do {
+            try KeychainHelper.delete()
+            apiKey = ""
+            tmdbClient = nil
+            return true
+        } catch {
+            showError("Could not remove the API key: \(error.localizedDescription)")
+            return false
+        }
     }
 
     func showError(_ message: String) {
@@ -142,6 +171,8 @@ class AppState: ObservableObject {
     }
 
     func reset() {
+        guard !isWritingFile else { return }
+        writeCoordinator.reset()
         currentScreen = .fileSelection
         selectedFileURL = nil
         fileInfo = ""
@@ -159,6 +190,7 @@ class AppState: ObservableObject {
     /// Returns true when the user picked a file rather than cancelling.
     @discardableResult
     func chooseFileViaPanel() -> Bool {
+        guard !isWritingFile else { return false }
         let panel = NSOpenPanel()
         panel.title = "Choose an MP4 file"
         panel.allowedContentTypes = [UTType.mpeg4Movie, UTType(filenameExtension: "m4v")].compactMap { $0 }
@@ -171,6 +203,8 @@ class AppState: ObservableObject {
     }
 
     func selectFile(_ url: URL) {
+        guard !isWritingFile else { return }
+        writeCoordinator.reset()
         let isNewFile = selectedFileURL != url
 
         // A different file invalidates any in-progress edit session and search:
@@ -213,24 +247,16 @@ class AppState: ObservableObject {
                 let detected = VideoResolution.detect(from: height)
                 if !info.isEmpty { info += " · " }
                 info += "\(width)×\(height) (\(detected.rawValue))"
-                await MainActor.run {
-                    // Only apply if this file is still the selected one — the
-                    // user may have picked another file while we were loading.
-                    if self.selectedFileURL == url { self.detectedResolution = detected }
-                }
+                if selectedFileURL == url { detectedResolution = detected }
             }
 
-            await MainActor.run {
-                guard self.selectedFileURL == url else { return }
-                if isReadable {
-                    self.fileInfo = info
-                } else {
-                    self.fileInfo = ""
-                    self.selectedFileURL = nil
-                    self.showError(
-                        "\u{201C}\(url.lastPathComponent)\u{201D} doesn\u{2019}t appear to be a readable MP4 video."
-                    )
-                }
+            guard selectedFileURL == url else { return }
+            if isReadable {
+                fileInfo = info
+            } else {
+                fileInfo = ""
+                selectedFileURL = nil
+                showError("\u{201C}\(url.lastPathComponent)\u{201D} doesn\u{2019}t appear to be a readable MP4 video.")
             }
         }
     }

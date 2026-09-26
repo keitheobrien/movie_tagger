@@ -27,8 +27,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: MovieTagger/MovieTagger.entitlements
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: false
-        MARKETING_VERSION: "1.4"
-        CURRENT_PROJECT_VERSION: 5
+        MARKETING_VERSION: "1.5"
+        CURRENT_PROJECT_VERSION: 6
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
@@ -41,3 +41,28 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           DEVELOPMENT_TEAM: "9R236BB67S"
           ENABLE_HARDENED_RUNTIME: YES
+
+  MovieTaggerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MovieTaggerTests
+    dependencies:
+      - target: MovieTagger
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.9"
+
+schemes:
+  MovieTagger:
+    build:
+      targets:
+        MovieTagger: all
+        MovieTaggerTests: [test]
+    test:
+      targets:
+        - MovieTaggerTests
+      # Testing must never check for updates, access real credentials or show UI.
+      environmentVariables:
+        MOVIETAGGER_TESTING: "1"

@@ -47,7 +47,7 @@ struct SettingsView: View {
 
                     if !appState.apiKey.isEmpty {
                         Button("Remove Key", role: .destructive) {
-                            appState.removeApiKey()
+                            guard appState.removeApiKey() else { return }
                             // Keep lastAttemptedKey in sync so the onChange
                             // reset doesn't immediately wipe the confirmation.
                             lastAttemptedKey = ""

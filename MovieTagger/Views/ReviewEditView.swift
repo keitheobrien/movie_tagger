@@ -21,9 +21,6 @@ private struct ReviewEditContent: View {
     @EnvironmentObject var appState: AppState
     @State private var showPosterPicker = false
     @State private var showCancelConfirm = false
-    @State private var showWriteConfirm = false
-    @State private var writeConfirmName: String?
-    @State private var isPreparingWrite = false
     @State private var isReloadingPosters = false
     @State private var formReady = false
 
@@ -293,25 +290,6 @@ private struct ReviewEditContent: View {
         formatter.formatIfValid(pattern: model.namingPattern, model: model)
     }
 
-    /// The exact name the rename step will produce — same formatting and the same
-    /// collision resolution as the actual write. Stats the filesystem, so it runs
-    /// off the main actor and is only called from button actions, never `body`.
-    private func resolvedRenameName() async -> String? {
-        guard model.renameFile, let name = formattedName else { return nil }
-        guard let source = appState.selectedFileURL else { return name }
-        return await formatter.resolveCollisionOffMain(
-            directoryURL: source.deletingLastPathComponent(),
-            desiredName: name,
-            excluding: source
-        ).lastPathComponent
-    }
-
-    /// Everything the rename outcome depends on — compared before/after the
-    /// slow stat so a confirmation never describes inputs the user has changed.
-    private var renameInputs: (Bool, String) {
-        (model.renameFile, formattedName ?? "")
-    }
-
     // MARK: - Bottom bar
 
     private var bottomBar: some View {
@@ -334,54 +312,13 @@ private struct ReviewEditContent: View {
                     Text("Your metadata edits will be lost.")
                 }
 
-            Button {
-                guard !isPreparingWrite else { return }
-                isPreparingWrite = true
-                Task {
-                    defer { isPreparingWrite = false }
-                    // Resolve right before asking so the confirmation names the
-                    // exact file the write will produce. The stat can take a
-                    // while on a cold volume — if the user edited the inputs
-                    // meanwhile, resolve again rather than describe a stale rename.
-                    var inputs: (Bool, String)
-                    var name: String?
-                    repeat {
-                        inputs = renameInputs
-                        name = await resolvedRenameName()
-                    } while inputs != renameInputs
-                    writeConfirmName = name
-                    showWriteConfirm = true
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    if isPreparingWrite { ProgressView().controlSize(.small) }
-                    Text("Write Metadata")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isPreparingWrite)
-                .confirmationDialog(
-                    "Write metadata to \u{201C}\(appState.selectedFileURL?.lastPathComponent ?? "file")\u{201D}?",
-                    isPresented: $showWriteConfirm
-                ) {
-                    Button("Write Metadata") { appState.currentScreen = .progress }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text(writeConfirmMessage)
-                }
+            Button("Write Metadata") { appState.startWriting() }
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.isWritingFile)
         }
         .padding()
     }
 
-    // Evaluated from `body` (confirmationDialog's message closure is
-    // non-escaping) — must stay free of I/O; the name was resolved at click time.
-    private var writeConfirmMessage: String {
-        var message = "Metadata is written directly into the file and can\u{2019}t be undone."
-        if let name = writeConfirmName, name != appState.selectedFileURL?.lastPathComponent {
-            message += " The file will then be renamed to \u{201C}\(name)\u{201D}."
-        }
-        return message
-    }
 }
 
 // MARK: - Rename preview row
